@@ -1,11 +1,12 @@
 """
 Text embedding with model selection and caching.
 """
+import os
 from sentence_transformers import SentenceTransformer
 
 # Registry — ranked by quality/cost
 MODELS = {
-    "chinese": "BAAI/bge-small-zh-v1.5",        # Chinese, 512 dims, 95MB — cached locally
+    "chinese": "BAAI/bge-small-zh-v1.5",        # Chinese, 512 dims, 95MB — default
     "english": "BAAI/bge-base-en-v1.5",           # English, 768 dims, 440MB
     "fast": "all-MiniLM-L6-v2",                    # English, 384 dims, 80MB
     "multilingual": "BAAI/bge-m3",                 # 100+ languages, 1024 dims, 2.2GB
@@ -15,10 +16,16 @@ _model = None
 _model_id = None
 
 
+def _default_model() -> str:
+    """Resolve default model: env var → registry key → bare model id."""
+    env_val = os.getenv("EMBEDDING_MODEL", "chinese")
+    return MODELS.get(env_val, env_val)
+
+
 def get_embedder(model_id: str | None = None):
     """Lazy-load embedding model (global singleton)."""
     global _model, _model_id
-    mid = model_id or MODELS["chinese"]
+    mid = model_id or _default_model()
     if _model is None or _model_id != mid:
         print(f"  Loading embedding model: {mid} ...")
         _model = SentenceTransformer(mid)
@@ -40,7 +47,7 @@ def embed_query(query: str, model_id: str | None = None) -> list[float]:
 
 def get_model_info(model_id: str | None = None) -> dict:
     """Return model metadata."""
-    mid = model_id or MODELS["chinese"]
+    mid = model_id or _default_model()
     model = get_embedder(mid)
     return {
         "model_id": mid,
