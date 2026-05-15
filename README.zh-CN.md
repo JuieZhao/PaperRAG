@@ -35,7 +35,7 @@ pip install -r requirements.txt
 streamlit run main.py
 ```
 
-打开 http://localhost:8501，在侧边栏粘贴 DeepSeek API key，上传 PDF 即可开始提问。
+打开 http://localhost:8501 ，在侧边栏粘贴 DeepSeek API key，上传 PDF 即可开始提问。
 
 > 💡 免费获取 API key：[platform.deepseek.com](https://platform.deepseek.com)
 > Key 仅保存在浏览器会话中，不会写入磁盘。
