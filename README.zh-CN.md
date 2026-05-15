@@ -50,7 +50,7 @@ DEEPSEEK_MODEL=deepseek-chat
 streamlit run main.py
 ```
 
-打开 http://localhost:8501，上传 PDF 即可开始提问。
+打开 http://localhost:8501 , 上传 PDF 即可开始提问。
 
 ## 项目结构
 

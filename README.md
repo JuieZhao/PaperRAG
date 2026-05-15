@@ -49,7 +49,7 @@ DEEPSEEK_MODEL=deepseek-chat
 streamlit run main.py
 ```
 
-Open http://localhost:8501, upload your PDFs, and start asking questions.
+Open http://localhost:8501 ,upload your PDFs, and start asking questions.
 
 ## Project Structure
 
