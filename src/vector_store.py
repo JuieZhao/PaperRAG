@@ -22,7 +22,7 @@ def add_chunks(collection, chunks: list[dict], embeddings: list[list[float]]):
     """
     ids = [f"{c['paper_name']}_chunk_{c['chunk_id']}" for c in chunks]
     documents = [c["text"] for c in chunks]
-    metadatas = [{"paper_name": c["paper_name"], "chunk_id": c["chunk_id"]} for c in chunks]
+    metadatas = [{"paper_name": c["paper_name"], "chunk_id": c["chunk_id"], "page": c.get("page", "?")} for c in chunks]
 
     # 分批添加（避免一次太大）
     batch_size = 100

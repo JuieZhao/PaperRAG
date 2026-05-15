@@ -77,6 +77,7 @@ def retrieve(
                 "text": doc,
                 "paper_name": paper,
                 "chunk_id": meta.get("chunk_id", -1),
+                "page": meta.get("page", "?"),
                 "score": round(1 - dist, 4) if dist else 0,
             })
 

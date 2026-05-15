@@ -26,7 +26,7 @@ SYSTEM_PROMPT = """You are an academic research assistant. Answer questions base
 
 Requirements:
 1. Base your answer on the provided literature content — do not fabricate
-2. Cite sources by paper name when referencing them
+2. Cite sources by paper name AND page number when referencing them (e.g. "(Smith et al., p.23)")
 3. If the literature does not contain relevant information, honestly state so
 4. Answer in the same language as the question
 5. You may supplement with your domain knowledge, but clearly distinguish what comes from the literature vs. your knowledge
@@ -38,7 +38,7 @@ def _build_context(retrieved_chunks: list[dict]) -> str:
     parts = []
     for i, chunk in enumerate(retrieved_chunks):
         parts.append(
-            f"[Source {i+1}] Paper: {chunk['paper_name']}\n{chunk['text']}"
+            f"[Source {i+1}] Paper: {chunk['paper_name']} (p.{chunk.get('page', '?')})\n{chunk['text']}"
         )
     return "\n\n---\n\n".join(parts)
 

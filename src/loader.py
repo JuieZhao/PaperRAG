@@ -8,12 +8,14 @@ import fitz  # pymupdf
 
 
 def load_pdf_text(file_path: str) -> str:
-    """Extract full text from a single PDF. Returns empty string on failure."""
+    """Extract full text from a PDF with page markers. Returns empty string on failure."""
     try:
         doc = fitz.open(file_path)
         text = ""
-        for page in doc:
-            text += page.get_text()
+        for i, page in enumerate(doc, 1):
+            page_text = page.get_text()
+            if page_text.strip():
+                text += f"\n[PAGE_{i}]\n{page_text}"
         doc.close()
         return text
     except Exception as e:
@@ -67,6 +69,19 @@ def load_pdfs_from_dir(dir_path: str) -> list[dict]:
 
 
 # --- Citation-aware chunking ---
+
+_PAGE_RE = re.compile(r"\[PAGE_(\d+)\]")
+
+
+def _extract_pages(text: str) -> str:
+    """Extract page numbers from [PAGE_N] markers. Returns comma-separated string."""
+    pages = _PAGE_RE.findall(text)
+    return ",".join(pages) if pages else "?"
+
+
+def _strip_page_markers(text: str) -> str:
+    """Remove [PAGE_N] markers from text."""
+    return _PAGE_RE.sub("", text).strip()
 
 SECTION_PATTERNS = re.compile(
     r"\n\s*(?:\d+[\.\)]\s*)?"
@@ -127,7 +142,7 @@ def chunk_papers(papers: list[dict]) -> list[dict]:
     1. Split each paper into sections
     2. Split oversized sections into paragraphs
 
-    Returns: [{'paper_name': ..., 'chunk_id': ..., 'text': ...}]
+    Returns: [{'paper_name': ..., 'chunk_id': ..., 'text': ..., 'page': ...}]
     """
     chunks = []
     for paper in papers:
@@ -146,13 +161,15 @@ def chunk_papers(papers: list[dict]) -> list[dict]:
                         chunks.append({
                             "paper_name": paper["name"],
                             "chunk_id": len(chunks),
-                            "text": sub_text.strip(),
+                            "text": _strip_page_markers(sub_text.strip()),
+                            "page": _extract_pages(sub_text.strip()),
                         })
             else:
                 if section.strip() and len(section) > 50:
                     chunks.append({
                         "paper_name": paper["name"],
                         "chunk_id": len(chunks),
-                        "text": section.strip(),
+                        "text": _strip_page_markers(section.strip()),
+                        "page": _extract_pages(section.strip()),
                     })
     return chunks

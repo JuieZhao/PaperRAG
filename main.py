@@ -297,7 +297,7 @@ with tab1:
                 seen = set()
                 for r in results:
                     if r["paper_name"] not in seen:
-                        copy_text += f"- {r['paper_name']} (relevance: {r['score']:.0%})\n"
+                        copy_text += f"- {r['paper_name']} (p.{r.get('page', '?')}, relevance: {r['score']:.0%})\n"
                         seen.add(r["paper_name"])
                 st.download_button(
                     "📋 Export answer as Markdown",
@@ -319,7 +319,7 @@ with tab1:
                         expanded=False,
                     ):
                         for i, c in enumerate(chunks_list):
-                            st.markdown(f"**Relevance:** `{c['score']:.2%}`")
+                            st.markdown(f"**Relevance:** `{c['score']:.2%}` | Page: `{c.get('page', '?')}`")
                             st.text(c["text"])
                             if i < len(chunks_list) - 1:
                                 st.divider()
