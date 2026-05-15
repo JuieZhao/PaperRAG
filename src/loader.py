@@ -21,6 +21,39 @@ def load_pdf_text(file_path: str) -> str:
         return ""
 
 
+def _extract_year(meta: dict) -> str:
+    """Extract year from PDF metadata (various date formats)."""
+    import re
+    for key in ("creationDate", "modDate", "date"):
+        val = meta.get(key, "")
+        if val:
+            # D:20230101... or 2023-01-01 or just 2023
+            m = re.search(r"(?:D:)?(\d{4})", str(val))
+            if m:
+                return m.group(1)
+    return ""
+
+
+def load_pdf_meta(file_path: str) -> dict:
+    """
+    Extract metadata (title, author, year) from a PDF.
+    Falls back to filename if metadata is missing.
+    """
+    try:
+        doc = fitz.open(file_path)
+        meta = doc.metadata
+        doc.close()
+
+        # Clean empty/placeholder values
+        title = (meta.get("title") or "").strip()
+        author = (meta.get("author") or "").strip()
+        year = _extract_year(meta)
+
+        return {"title": title, "author": author, "year": year}
+    except Exception:
+        return {"title": "", "author": "", "year": ""}
+
+
 def load_pdfs_from_dir(dir_path: str) -> list[dict]:
     """Load all PDFs from a directory. Returns [{'name': ..., 'text': ...}]."""
     papers = []

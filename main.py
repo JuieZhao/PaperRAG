@@ -3,24 +3,55 @@ PaperRAG — Your Papers, Your Knowledge
 Streamlit UI with side-by-side answer + enhanced sources + export + multi-turn
 """
 import os
+import json
 import streamlit as st
 from collections import defaultdict
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.loader import load_pdf_text, chunk_papers
+from src.loader import load_pdf_text, load_pdf_meta, chunk_papers
 from src.embedder import embed_texts
 from src.vector_store import get_collection, add_chunks, get_chunk_count, get_paper_names, delete_paper
 from src.retriever import retrieve, rerank
 from src.generator import generate_answer_stream
 
+HISTORY_FILE = "data/qa_history.json"
+
 st.set_page_config(page_title="PaperRAG", page_icon="📄", layout="wide")
 st.title("📄 PaperRAG — Your Papers, Your Knowledge")
 
-# ---- Session state for multi-turn ----
+
+# ---- History persistence helpers ----
+def _save_history():
+    """Persist Q&A history and chat messages to JSON."""
+    os.makedirs("data", exist_ok=True)
+    payload = {
+        "qa_history": st.session_state.history,
+        "chat_messages": st.session_state.chat_messages,
+    }
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def _load_history():
+    """Load persisted history from JSON. Returns (qa_history, chat_messages)."""
+    if not os.path.exists(HISTORY_FILE):
+        return [], []
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("qa_history", []), data.get("chat_messages", [])
+    except Exception:
+        return [], []
+
+
+# ---- Session state ----
 if "history" not in st.session_state:
-    st.session_state.history = []  # [(question, answer, sources)]
+    qa, msgs = _load_history()
+    st.session_state.history = qa  # [(question, answer, sources, timestamp)]
+    st.session_state.chat_messages = msgs  # [{"role": ..., "content": ...}]
 
 # ---- Sidebar ----
 with st.sidebar:
@@ -93,7 +124,19 @@ with st.sidebar:
         # Refresh paper list if chunk count changed (after index/delete)
         if st.session_state.paper_list is None or get_chunk_count(collection) != chunk_count:
             st.session_state.paper_list = get_paper_names(collection)
+            st.session_state.paper_meta = {}  # reset metadata cache
         paper_names = st.session_state.paper_list
+
+        # Lazy-load paper metadata (title, author, year) with caching
+        if "paper_meta" not in st.session_state:
+            st.session_state.paper_meta = {}
+        for p in paper_names:
+            if p not in st.session_state.paper_meta:
+                path = os.path.join("data/papers", p)
+                if os.path.exists(path):
+                    st.session_state.paper_meta[p] = load_pdf_meta(path)
+                else:
+                    st.session_state.paper_meta[p] = {"title": "", "author": "", "year": ""}
 
         # Filter papers
         if len(paper_names) > 5:
@@ -108,10 +151,28 @@ with st.sidebar:
         if len(paper_names) > 10:
             with st.expander(f"📋 {len(paper_names)} papers (click to expand)", expanded=len(paper_names) <= 5):
                 for p in paper_names:
-                    st.caption(f"• {p}")
+                    meta = st.session_state.paper_meta.get(p, {})
+                    title = meta.get("title") or p
+                    author = meta.get("author", "")
+                    year = meta.get("year", "")
+                    line = f"• **{title}**"
+                    if author:
+                        line += f" — {author}"
+                    if year:
+                        line += f" ({year})"
+                    st.caption(line)
         else:
             for p in paper_names:
-                st.caption(f"• {p}")
+                meta = st.session_state.paper_meta.get(p, {})
+                title = meta.get("title") or p
+                author = meta.get("author", "")
+                year = meta.get("year", "")
+                line = f"• **{title}**"
+                if author:
+                    line += f" — {author}"
+                if year:
+                    line += f" ({year})"
+                st.caption(line)
 
         st.divider()
 
@@ -135,9 +196,28 @@ with st.sidebar:
 
     st.divider()
 
+    # ---- Model settings ----
+    st.subheader("⚙️ Model Settings")
+    model_choice = st.selectbox(
+        "LLM Model",
+        ["deepseek-chat", "deepseek-reasoner"],
+        index=0,
+        label_visibility="collapsed",
+    )
+    temperature = st.slider(
+        "Temperature",
+        min_value=0.0, max_value=1.0, value=0.3, step=0.1,
+        label_visibility="collapsed",
+    )
+    st.caption(f"Model: `{model_choice}` | Temp: `{temperature}`")
+
+    st.divider()
+
     # Clear history button
     if st.button("🗑️ Clear chat history"):
         st.session_state.history = []
+        st.session_state.chat_messages = []
+        _save_history()
         st.rerun()
 
     st.caption("Built with Chroma + BGE + DeepSeek")
@@ -170,12 +250,17 @@ with tab1:
         if not results:
             st.warning("No relevant papers found. Upload some PDFs first.")
         else:
-            # Stream answer with LaTeX support
+            # Stream answer with LaTeX support + conversation history
             with left:
                 st.markdown("### 📝 Answer")
                 placeholder = st.empty()
                 full_text = ""
-                for chunk in generate_answer_stream(query, results):
+                for chunk in generate_answer_stream(
+                    query, results,
+                    model=model_choice,
+                    history=st.session_state.chat_messages,
+                    temperature=temperature,
+                ):
                     full_text += chunk
                     # Normalize LaTeX delimiters: \(...\) → $...$, \[...\] → $$...$$
                     display = full_text.replace("\\(", "$").replace("\\)", "$")
@@ -215,15 +300,21 @@ with tab1:
                             if i < len(chunks_list) - 1:
                                 st.divider()
 
-            # Save to history
-            st.session_state.history.append((query, answer, results))
+            # Save to history + conversation
+            timestamp = datetime.now().isoformat()
+            st.session_state.history.append((query, answer, results, timestamp))
+            st.session_state.chat_messages.append({"role": "user", "content": query})
+            st.session_state.chat_messages.append({"role": "assistant", "content": answer})
+            _save_history()
 
 with tab2:
     if not st.session_state.history:
-        st.caption("Your Q&A history will appear here. Use the sidebar to clear.")
+        st.caption("Your Q&A history will appear here. Use the sidebar to clear. History persists across restarts.")
     else:
-        for q, a, sources in reversed(st.session_state.history):
-            with st.expander(f"❓ {q[:100]}...", expanded=False):
+        for q, a, sources, ts in reversed(st.session_state.history):
+            label = f"❓ {q[:100]}..."
+            with st.expander(label, expanded=False):
+                st.caption(f"🕒 {ts[:19]}")
                 st.markdown(f"**Q:** {q}")
                 st.markdown(a)
                 st.caption("—" * 20)

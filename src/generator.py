@@ -1,11 +1,13 @@
 """
 LLM answer generation with DeepSeek (OpenAI-compatible API)
+Supports multi-turn conversation with history.
 """
 import os
 from collections.abc import Generator
 from openai import OpenAI, APIError, APITimeoutError, RateLimitError
 
 _client = None
+MAX_HISTORY_TURNS = 10  # Keep last N Q&A pairs for context
 
 
 def get_client():
@@ -20,14 +22,15 @@ def get_client():
     return _client
 
 
-SYSTEM_PROMPT = """You are an academic research assistant. Answer questions based on provided literature excerpts.
+SYSTEM_PROMPT = """You are an academic research assistant. Answer questions based on provided literature excerpts and conversation context.
 
 Requirements:
 1. Base your answer on the provided literature content — do not fabricate
 2. Cite sources by paper name when referencing them
 3. If the literature does not contain relevant information, honestly state so
 4. Answer in the same language as the question
-5. You may supplement with your domain knowledge, but clearly distinguish what comes from the literature vs. your knowledge"""
+5. You may supplement with your domain knowledge, but clearly distinguish what comes from the literature vs. your knowledge
+6. When the user asks follow-up questions (e.g. "explain more", "what about X"), refer to the previous conversation context"""
 
 
 def _build_context(retrieved_chunks: list[dict]) -> str:
@@ -40,27 +43,71 @@ def _build_context(retrieved_chunks: list[dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def _build_messages(query: str, context: str) -> list[dict]:
-    """Build messages for the LLM call."""
-    return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"""## Question
+def _build_messages(
+    query: str,
+    context: str,
+    history: list[dict] | None = None,
+) -> list[dict]:
+    """
+    Build messages for the LLM call, including conversation history.
+    history: list of {"role": "user"|"assistant", "content": "..."}
+    """
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    # Include recent conversation history (last N turns)
+    if history:
+        recent = history[-(MAX_HISTORY_TURNS * 2):]  # Each turn = user + assistant
+        messages.extend(recent)
+
+    # Current question with retrieved context
+    messages.append({
+        "role": "user",
+        "content": f"""## Question
 {query}
 
 ## Relevant Literature Excerpts
 {context}
 
-Please answer the question based on the above literature excerpts."""},
-    ]
+Please answer the question based on the above literature excerpts."""
+    })
+
+    return messages
+
+
+def _call_llm(
+    client,
+    model: str,
+    messages: list[dict],
+    temperature: float = 0.3,
+    max_tokens: int = 2048,
+):
+    """Unified LLM call with error handling."""
+    try:
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    except RateLimitError:
+        raise RuntimeError("⚠️ API rate limit exceeded. Please wait a moment and try again.")
+    except APITimeoutError:
+        raise RuntimeError("⚠️ Request timed out. The model may be overloaded. Please try again.")
+    except APIError as e:
+        raise RuntimeError(f"⚠️ API error: {e.message if hasattr(e, 'message') else str(e)[:200]}")
+    except Exception as e:
+        raise RuntimeError(f"⚠️ Unexpected error generating answer: {str(e)[:200]}")
 
 
 def generate_answer(
     query: str,
     retrieved_chunks: list[dict],
     model: str | None = None,
+    history: list[dict] | None = None,
+    temperature: float = 0.3,
 ) -> str:
     """
-    Generate answer from retrieved chunks.
+    Generate answer from retrieved chunks with optional conversation history.
     Returns answer string, or error message on failure.
     """
     if not retrieved_chunks:
@@ -69,35 +116,26 @@ def generate_answer(
     try:
         client = get_client()
         model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-
         context = _build_context(retrieved_chunks)
-        messages = _build_messages(query, context)
+        messages = _build_messages(query, context, history)
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.3,
-            max_tokens=2048,
-        )
+        response = _call_llm(client, model, messages, temperature=temperature)
         return response.choices[0].message.content
 
-    except RateLimitError:
-        return "⚠️ API rate limit exceeded. Please wait a moment and try again."
-    except APITimeoutError:
-        return "⚠️ Request timed out. The model may be overloaded. Please try again."
-    except APIError as e:
-        return f"⚠️ API error: {e.message if hasattr(e, 'message') else str(e)[:200]}"
-    except Exception as e:
-        return f"⚠️ Unexpected error generating answer: {str(e)[:200]}"
+    except RuntimeError as e:
+        return str(e)
 
 
 def generate_answer_stream(
     query: str,
     retrieved_chunks: list[dict],
     model: str | None = None,
+    history: list[dict] | None = None,
+    temperature: float = 0.3,
 ) -> Generator[str, None, None]:
     """
     Stream answer token by token from retrieved chunks.
+    Accepts conversation history for multi-turn support.
     Yields text fragments; yields error strings prefixed with ⚠️ on failure.
     """
     if not retrieved_chunks:
@@ -107,14 +145,13 @@ def generate_answer_stream(
     try:
         client = get_client()
         model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-
         context = _build_context(retrieved_chunks)
-        messages = _build_messages(query, context)
+        messages = _build_messages(query, context, history)
 
         stream = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=0.3,
+            temperature=temperature,
             max_tokens=2048,
             stream=True,
         )
@@ -122,11 +159,5 @@ def generate_answer_stream(
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
 
-    except RateLimitError:
-        yield "⚠️ API rate limit exceeded. Please wait a moment and try again."
-    except APITimeoutError:
-        yield "⚠️ Request timed out. The model may be overloaded. Please try again."
-    except APIError as e:
-        yield f"⚠️ API error: {e.message if hasattr(e, 'message') else str(e)[:200]}"
-    except Exception as e:
-        yield f"⚠️ Unexpected error generating answer: {str(e)[:200]}"
+    except RuntimeError as e:
+        yield str(e)

@@ -2,12 +2,15 @@
 Download papers with proxy support + more sources
 """
 import os
+import sys
 import requests
 
-PAPERS_DIR = "E:/junie/openclaw/GitHub project/PaperRAG/data/papers"
+PAPERS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "papers")
 os.makedirs(PAPERS_DIR, exist_ok=True)
 
-PROXY = {"http": "http://127.0.0.1:7897", "https": "http://127.0.0.1:7897"}
+# Read proxy from env var (e.g. HTTP_PROXY=http://127.0.0.1:7890)
+_proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+PROXY = {"http": _proxy_url, "https": _proxy_url} if _proxy_url else None
 
 PAPERS = [
     # Already downloaded, skip
