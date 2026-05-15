@@ -335,7 +335,9 @@ with tab2:
     if not st.session_state.history:
         st.caption("Your Q&A history will appear here. Use the sidebar to clear. History persists across restarts.")
     else:
-        for q, a, sources, ts in reversed(st.session_state.history):
+        total = len(st.session_state.history)
+        for i, (q, a, sources, ts) in enumerate(reversed(st.session_state.history)):
+            actual_idx = total - 1 - i  # index in the original list
             label = f"❓ {q[:100]}..."
             with st.expander(label, expanded=False):
                 st.caption(f"🕒 {ts[:19]}")
@@ -347,3 +349,12 @@ with tab2:
                     if s["paper_name"] not in seen:
                         st.caption(f"📄 {s['paper_name']}")
                         seen.add(s["paper_name"])
+                # Per-entry delete
+                if st.button("🗑️ Remove this entry", key=f"del_hist_{ts}"):
+                    st.session_state.history.pop(actual_idx)
+                    # Remove corresponding chat messages (2 per Q&A: user + assistant)
+                    msg_idx = actual_idx * 2
+                    if msg_idx + 1 < len(st.session_state.chat_messages):
+                        del st.session_state.chat_messages[msg_idx:msg_idx + 2]
+                    _save_history()
+                    st.rerun()
