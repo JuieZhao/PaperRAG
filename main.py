@@ -104,16 +104,24 @@ with st.sidebar:
                     st.warning("All uploaded papers are already indexed.")
                 else:
                     papers = []
+                    failed = []
                     for uf in new_files:
                         path = os.path.join("data/papers", uf.name)
                         with open(path, "wb") as f:
                             f.write(uf.getbuffer())
+                        size_kb = os.path.getsize(path) / 1024
                         text = load_pdf_text(path)
                         if text.strip():
                             papers.append({"name": uf.name, "text": text})
+                        else:
+                            failed.append((uf.name, size_kb))
 
                     if not papers:
                         st.error("No valid PDFs found.")
+                        if failed:
+                            for name, kb in failed:
+                                st.warning(f"❌ `{name}` ({kb:.0f} KB) — no extractable text (scanned PDF?)")
+                            st.info("💡 Scanned/image-based PDFs need OCR. Try re-saving as text-based PDF or use an OCR tool first.")
                     else:
                         # Step 1: Chunk
                         progress = st.progress(0, "Chunking papers...")
