@@ -28,28 +28,18 @@ Upload PDF papers, ask questions in natural language, get cited answers backed b
 pip install -r requirements.txt
 ```
 
-### 2. Set up API key
-
-Copy `.env.example` to `.env` and fill in your DeepSeek API key:
-
-```bash
-cp .env.example .env
-```
-
-`.env`:
-```
-DEEPSEEK_API_KEY=sk-your-key-here
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
-```
-
-### 3. Run
+### 2. Run
 
 ```bash
 streamlit run main.py
 ```
 
-Open http://localhost:8501 ,upload your PDFs, and start asking questions.
+Open http://localhost:8501, paste your DeepSeek API key in the sidebar, upload your PDFs, and start asking questions.
+
+> 💡 Get a free API key at [platform.deepseek.com](https://platform.deepseek.com).
+> The key stays in your browser session — never saved to disk.
+>
+> Advanced: create a `.env` file (see `.env.example`) if you prefer file-based config.
 
 ## Project Structure
 

@@ -57,6 +57,22 @@ if "history" not in st.session_state:
 with st.sidebar:
     st.header("📁 Paper Library")
 
+    # ---- API Key (UI-friendly, no .env file needed) ----
+    with st.expander("🔑 API Key Setup", expanded=not os.getenv("DEEPSEEK_API_KEY")):
+        api_key = st.text_input(
+            "DeepSeek API Key",
+            type="password",
+            value=os.getenv("DEEPSEEK_API_KEY", ""),
+            placeholder="sk-xxxxxxxxxxxxxxxx",
+            help="Paste your DeepSeek API key here. Get one at platform.deepseek.com",
+            label_visibility="collapsed",
+        )
+        if api_key:
+            os.environ["DEEPSEEK_API_KEY"] = api_key
+        st.caption("Get a free key at [platform.deepseek.com](https://platform.deepseek.com)")
+        if not api_key:
+            st.warning("⚠️ API key required to ask questions")
+
     collection = get_collection()
     chunk_count = get_chunk_count(collection)
     st.metric("Indexed chunks", chunk_count)
