@@ -1,45 +1,86 @@
-# PaperRAG — 论文知识检索库
+# PaperRAG — Ask Your Papers
 
-> 让用户上传自己的 PDF 论文，用自然语言提问，AI 基于文献回答并标注来源。
+> 📄 [中文文档](README.zh-CN.md)
 
-## 核心理念
-- **不是通用聊天机器人**：知识来源是你自己上传的论文，不是网上搜的
-- **每个回答都可溯源**：引用标注到具体论文和片段
-- **你的论文你做主**：增删 PDF 就是增删知识库
+Upload PDF papers, ask questions in natural language, get cited answers backed by your own literature.
 
-## 核心功能
-- 上传 PDF 论文 → 自动解析、向量化、入库
-- 自然语言提问 → 检索相关片段 → LLM 生成带引用的回答
-- 支持中英文混合检索
+## Why PaperRAG?
 
----
+- **Your papers, your knowledge** — answers are grounded in *your* uploaded PDFs, not web search
+- **Every answer is traceable** — citations link to specific papers and text chunks
+- **You control the knowledge base** — add/remove PDFs to curate what the AI knows
 
-## 项目结构
+## Features
+
+- 📤 Upload PDFs → auto-parse, chunk, embed, index
+- 🔍 Natural language QA → retrieve relevant chunks → LLM generates cited answers
+- 🌐 Bilingual search (Chinese + English)
+- 🎯 Cross-encoder reranking for better retrieval precision
+- ⚡ Streaming responses (answers appear token by token)
+- 🗑️ Batch paper management (checkbox selection + bulk delete)
+- 📋 Export answers as Markdown with source citations
+
+## Quick Start
+
+### 1. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Set up API key
+
+Copy `.env.example` to `.env` and fill in your DeepSeek API key:
+
+```bash
+cp .env.example .env
+```
+
+`.env`:
+```
+DEEPSEEK_API_KEY=sk-your-key-here
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+```
+
+### 3. Run
+
+```bash
+streamlit run main.py
+```
+
+Open http://localhost:8501, upload your PDFs, and start asking questions.
+
+## Project Structure
 
 ```
 PaperRAG/
-├── README.md
+├── main.py              # Streamlit UI entry point
 ├── requirements.txt
 ├── .env.example
-├── main.py              # Streamlit 入口
+├── download_papers.py   # Utility: batch download papers from URLs
+├── test_pipeline.py     # End-to-end pipeline test
 ├── src/
-│   ├── __init__.py
-│   ├── loader.py        # PDF 解析 + 文本分块
-│   ├── embedder.py      # 文本向量化
-│   ├── vector_store.py  # Chroma 向量库操作
-│   ├── retriever.py     # 检索逻辑
-│   └── generator.py     # LLM 问答生成
-├── data/
-│   └── papers/          # 放你要索引的 PDF
-└── chroma_db/           # 向量库持久化存储
+│   ├── loader.py        # PDF parsing + citation-aware chunking
+│   ├── embedder.py      # Text embedding (BGE models)
+│   ├── vector_store.py  # Chroma vector DB operations
+│   ├── retriever.py     # Retrieval + cross-encoder reranking
+│   └── generator.py     # LLM answer generation (streaming)
+├── data/papers/         # Your PDF files (git-ignored)
+└── chroma_db/           # Vector store persistence (git-ignored)
 ```
 
 ## Tech Stack
-| 层 | 技术 | 备注 |
-|---|---|---|
+
+| Layer | Technology | Notes |
+|-------|-----------|-------|
 | UI | Streamlit | `pip install streamlit` |
-| PDF 解析 | PyMuPDF (fitz) | `pip install pymupdf` |
-| 文本分块 | LangChain RecursiveCharacterTextSplitter | 按语义边界切分 |
-| Embedding | text2vec-large-chinese 或 BGE | 中文友好 |
-| 向量库 | Chroma | `pip install chromadb` |
-| LLM | DeepSeek API | `pip install openai`，兼容 OpenAI SDK |
+| PDF Parsing | PyMuPDF (fitz) | Citation-aware section splitting |
+| Embedding | BGE (BAAI/bge-small-zh-v1.5) | Runs locally, no API needed |
+| Vector DB | Chroma | Persistent, zero-config |
+| LLM | DeepSeek API | OpenAI-compatible SDK |
+| Reranking | ms-marco-MiniLM-L-6-v2 | Cross-encoder for precision |
+
+## License
+
+MIT
