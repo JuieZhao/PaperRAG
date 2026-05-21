@@ -1,9 +1,10 @@
 """
 PaperRAG — 论文知识检索库 · 北极甜虾 Design Edition
-Streamlit UI: dark academic theme, enhanced paper cards, polished UX
+Streamlit UI: dark academic theme, hybrid search, metadata filtering
 """
 import os
 import json
+import hashlib
 import streamlit as st
 from collections import defaultdict
 from datetime import datetime
@@ -11,11 +12,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.loader import load_pdf_text, load_pdf_meta, chunk_papers
-from src.embedder import embed_texts
-from src.vector_store import get_collection, add_chunks, get_chunk_count, get_paper_names, delete_paper
-from src.retriever import retrieve, rerank
-from src.generator import generate_answer_stream
+from src.loader import load_pdf_text, load_pdf_meta, chunk_papers, compute_file_hash
+from src.embedder import embed_texts, get_model_info
+from src.vector_store import (
+    get_collection, add_chunks, get_chunk_count, get_paper_names,
+    delete_paper, get_file_hashes, get_filter_options,
+)
+from src.retriever import search_papers
 
 HISTORY_FILE = "data/qa_history.json"
 
@@ -28,7 +31,6 @@ st.markdown("""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=JetBrains+Mono:wght@400;600&display=swap');
 
-  /* ── Root colors ── */
   :root {
     --bg-primary: #0f1419;
     --bg-secondary: #151c25;
@@ -46,219 +48,113 @@ st.markdown("""
     --purple: #c792ea;
   }
 
-  /* ── Global overrides ── */
-  .stApp {
-    background: var(--bg-primary);
-  }
-  .main .block-container {
-    padding-top: 1.5rem;
-    max-width: 100%;
-  }
+  .stApp { background: var(--bg-primary); }
+  .main .block-container { padding-top: 1.5rem; max-width: 100%; }
 
-  /* Typography */
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Source Serif 4', 'Noto Sans SC', serif !important;
-    color: var(--text-primary) !important;
-    font-weight: 700 !important;
+    color: var(--text-primary) !important; font-weight: 700 !important;
   }
-  p, li, label, div, span {
-    font-family: 'Noto Sans SC', sans-serif;
-  }
+  p, li, label, div, span { font-family: 'Noto Sans SC', sans-serif; }
   code, pre {
     font-family: 'JetBrains Mono', monospace !important;
     background: var(--bg-secondary) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 4px !important;
+    border: 1px solid var(--border) !important; border-radius: 4px !important;
   }
 
-  /* ── Sidebar ── */
   [data-testid="stSidebar"] {
-    background: var(--bg-secondary);
-    border-right: 1px solid var(--border);
+    background: var(--bg-secondary); border-right: 1px solid var(--border);
   }
-  [data-testid="stSidebar"] .block-container {
-    padding: 1.5rem 1rem;
-  }
-  [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-    font-family: 'Noto Sans SC', sans-serif !important;
-    font-size: 0.85rem !important;
-    letter-spacing: 0.06em !important;
-    color: var(--text-secondary) !important;
-    text-transform: uppercase;
-  }
+  [data-testid="stSidebar"] .block-container { padding: 1.5rem 1rem; }
 
-  /* ── Inputs ── */
   .stTextInput > div > div > input,
   .stSelectbox > div > div,
   .stTextArea textarea {
     background: var(--bg-card) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 6px !important;
-    color: var(--text-primary) !important;
-    font-size: 0.9rem;
+    border: 1px solid var(--border) !important; border-radius: 6px !important;
+    color: var(--text-primary) !important; font-size: 0.9rem;
   }
   .stTextInput > div > div > input:focus {
     border-color: var(--accent) !important;
     box-shadow: 0 0 0 2px var(--accent-dim) !important;
   }
 
-  /* ── Buttons ── */
   .stButton > button {
-    font-family: 'Noto Sans SC', sans-serif !important;
-    font-weight: 600 !important;
-    border-radius: 6px !important;
-    transition: all 0.2s ease !important;
+    font-family: 'Noto Sans SC', sans-serif !important; font-weight: 600 !important;
+    border-radius: 6px !important; transition: all 0.2s ease !important;
   }
   .stButton > button[kind="primary"] {
-    background: var(--accent) !important;
-    border: none !important;
-    color: white !important;
+    background: var(--accent) !important; border: none !important; color: white !important;
   }
-  .stButton > button[kind="primary"]:hover {
-    filter: brightness(1.15);
-    box-shadow: 0 0 16px var(--accent-dim);
-  }
-  .stButton > button[kind="secondary"] {
-    background: transparent !important;
-    border: 1px solid var(--border) !important;
-    color: var(--text-secondary) !important;
-  }
+  .stButton > button[kind="primary"]:hover { filter: brightness(1.15); box-shadow: 0 0 16px var(--accent-dim); }
 
-  /* ── Metrics ── */
   [data-testid="stMetric"] {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 16px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px;
   }
   [data-testid="stMetric"] label {
     font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.65rem !important;
-    letter-spacing: 0.08em !important;
-    color: var(--text-muted) !important;
+    font-size: 0.65rem !important; letter-spacing: 0.08em !important; color: var(--text-muted) !important;
   }
   [data-testid="stMetric"] [data-testid="stMetricValue"] {
     font-family: 'JetBrains Mono', monospace !important;
-    font-size: 1.4rem !important;
-    font-weight: 700 !important;
-    color: var(--accent) !important;
+    font-size: 1.4rem !important; font-weight: 700 !important; color: var(--accent) !important;
   }
 
-  /* ── Expanders ── */
+  .paper-card {
+    padding: 8px 12px; margin: 4px 0; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg-card);
+    transition: all 0.15s ease; cursor: default;
+  }
+  .paper-card:hover { border-color: var(--accent); background: var(--bg-hover); }
+  .paper-card .title { font-weight: 600; color: var(--text-primary); font-size: 0.8rem; }
+  .paper-card .meta { color: var(--text-muted); font-size: 0.68rem; margin-top: 2px; }
+
+  .source-block {
+    padding: 12px 16px; margin: 8px 0; border-left: 3px solid var(--accent);
+    background: var(--bg-card); border-radius: 0 6px 6px 0;
+    font-size: 0.78rem; color: var(--text-secondary); line-height: 1.6;
+  }
+  .source-block .relevance { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--accent); margin-bottom: 6px; }
+  .source-block .text { color: var(--text-primary); }
+
+  .answer-container {
+    padding: 20px 24px; background: var(--bg-card); border-radius: 8px;
+    border: 1px solid var(--border); min-height: 200px; line-height: 1.8; font-size: 0.9rem;
+  }
+
+  .footer-text {
+    font-size: 0.62rem; color: var(--text-muted); letter-spacing: 0.06em;
+    text-align: center; padding: 16px 0 4px;
+  }
+  hr { border-color: var(--border) !important; }
+
   .streamlit-expanderHeader {
-    background: var(--bg-card) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 6px !important;
-    font-size: 0.82rem !important;
-    color: var(--text-secondary) !important;
+    background: var(--bg-card) !important; border: 1px solid var(--border) !important;
+    border-radius: 6px !important; font-size: 0.82rem !important; color: var(--text-secondary) !important;
   }
   .streamlit-expanderContent {
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border) !important;
-    border-top: none !important;
-    border-radius: 0 0 6px 6px !important;
-    padding: 16px !important;
+    background: var(--bg-secondary) !important; border: 1px solid var(--border) !important;
+    border-top: none !important; border-radius: 0 0 6px 6px !important; padding: 16px !important;
   }
 
-  /* ── Tabs ── */
-  .stTabs [data-baseweb="tab-list"] {
-    gap: 8px;
-    border-bottom: 1px solid var(--border);
-  }
+  .stTabs [data-baseweb="tab-list"] { gap: 8px; border-bottom: 1px solid var(--border); }
   .stTabs [data-baseweb="tab"] {
-    background: transparent !important;
-    border-radius: 6px 6px 0 0 !important;
-    padding: 8px 20px !important;
-    color: var(--text-muted) !important;
-    font-weight: 500;
+    background: transparent !important; border-radius: 6px 6px 0 0 !important;
+    padding: 8px 20px !important; color: var(--text-muted) !important; font-weight: 500;
   }
   .stTabs [aria-selected="true"] {
-    background: var(--bg-card) !important;
-    color: var(--accent) !important;
+    background: var(--bg-card) !important; color: var(--accent) !important;
     border-bottom: 2px solid var(--accent) !important;
   }
 
-  /* ── Spinner ── */
-  .stSpinner > div {
-    border-color: var(--accent) !important;
-  }
-
-  /* ── Paper card in sidebar ── */
-  .paper-card {
-    padding: 8px 12px;
-    margin: 4px 0;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    transition: all 0.15s ease;
-    cursor: default;
-  }
-  .paper-card:hover {
-    border-color: var(--accent);
-    background: var(--bg-hover);
-  }
-  .paper-card .title {
-    font-weight: 600;
-    color: var(--text-primary);
-    font-size: 0.8rem;
-  }
-  .paper-card .meta {
-    color: var(--text-muted);
-    font-size: 0.68rem;
-    margin-top: 2px;
-  }
-
-  /* ── Source block ── */
-  .source-block {
-    padding: 12px 16px;
-    margin: 8px 0;
-    border-left: 3px solid var(--accent);
-    background: var(--bg-card);
-    border-radius: 0 6px 6px 0;
-    font-size: 0.78rem;
-    color: var(--text-secondary);
-    line-height: 1.6;
-  }
-  .source-block .relevance {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
-    color: var(--accent);
-    margin-bottom: 6px;
-  }
-  .source-block .text {
-    color: var(--text-primary);
-  }
-
-  /* ── Answer area ── */
-  .answer-container {
-    padding: 20px 24px;
-    background: var(--bg-card);
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    min-height: 200px;
-    line-height: 1.8;
-    font-size: 0.9rem;
-  }
-
-  /* ── Footer ── */
-  .footer-text {
-    font-size: 0.62rem;
-    color: var(--text-muted);
-    letter-spacing: 0.06em;
-    text-align: center;
-    padding: 16px 0 4px;
-  }
-
-  /* Divider override */
-  hr {
-    border-color: var(--border) !important;
-  }
+  .stSpinner > div { border-color: var(--accent) !important; }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════
-#  History persistence helpers
+#  History persistence
 # ═══════════════════════════════════════════
 def _save_history():
     os.makedirs("data", exist_ok=True)
@@ -301,11 +197,11 @@ with col_title:
         Paper<span style="color:#5b8def;">RAG</span>
       </span>
       <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:#5a6e88;letter-spacing:0.15em;">
-        ACADEMIC EDITION
+        HYBRID EDITION
       </span>
     </div>
     <p style="color:#8899b4;font-size:0.82rem;margin-top:0;">
-      Your papers, your knowledge. Ask questions, get cited answers.
+      Your papers, your knowledge. Hybrid BM25 + Dense retrieval.
     </p>
     """, unsafe_allow_html=True)
 
@@ -314,10 +210,10 @@ with col_title:
 #  Sidebar
 # ═══════════════════════════════════════════
 with st.sidebar:
-    # Repository badge
     collection = get_collection()
     chunk_count = get_chunk_count(collection)
 
+    # ── Stats ──
     st.markdown(f"""
     <div style="display:flex;gap:12px;margin-bottom:20px;">
       <div style="flex:1;background:#1a2230;border:1px solid rgba(99,130,180,.15);border-radius:8px;padding:12px 14px;text-align:center;">
@@ -325,20 +221,27 @@ with st.sidebar:
         <div style="font-size:0.62rem;color:#5a6e88;letter-spacing:.06em;margin-top:2px;">CHUNKS</div>
       </div>
       <div style="flex:1;background:#1a2230;border:1px solid rgba(99,130,180,.15);border-radius:8px;padding:12px 14px;text-align:center;">
-        <div style="font-family:'JetBrains Mono',monospace;font-size:1.3rem;font-weight:700;color:#4ec9a8;">{len(st.session_state.get('paper_list') or get_paper_names(collection)):,}</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:1.3rem;font-weight:700;color:#4ec9a8;">
+          {len(st.session_state.get('paper_list') or get_paper_names(collection)):,}
+        </div>
         <div style="font-size:0.62rem;color:#5a6e88;letter-spacing:.06em;margin-top:2px;">PAPERS</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Embedding info ──
+    try:
+        info = get_model_info()
+        st.caption(f"🔤 `{info['model_id'].split('/')[-1]}` · {info['dimensions']}d · {info['device']}")
+    except Exception:
+        pass
+
     # ── API Key ──
     with st.expander("🔑 API Key", expanded=not os.getenv("DEEPSEEK_API_KEY")):
         api_key = st.text_input(
-            "DeepSeek API Key",
-            type="password",
+            "DeepSeek API Key", type="password",
             value=os.getenv("DEEPSEEK_API_KEY", ""),
-            placeholder="sk-xxxxxxxxxxxxxxxx",
-            label_visibility="collapsed",
+            placeholder="sk-xxx...xxxx", label_visibility="collapsed",
         )
         if api_key:
             os.environ["DEEPSEEK_API_KEY"] = api_key
@@ -351,9 +254,7 @@ with st.sidebar:
     # ── Upload ──
     st.markdown("### 📤 Upload Papers")
     uploaded_files = st.file_uploader(
-        "Choose PDF files",
-        type="pdf",
-        accept_multiple_files=True,
+        "Choose PDF files", type="pdf", accept_multiple_files=True,
         label_visibility="collapsed",
     )
 
@@ -364,28 +265,46 @@ with st.sidebar:
 
                 if "paper_list" not in st.session_state or st.session_state.paper_list is None:
                     st.session_state.paper_list = get_paper_names(collection)
-                existing = set(st.session_state.paper_list)
+                existing_names = set(st.session_state.paper_list)
+                existing_hashes = get_file_hashes(collection)
 
-                skipped = [uf.name for uf in uploaded_files if uf.name in existing]
-                new_files = [uf for uf in uploaded_files if uf.name not in existing]
+                skipped = []
+                new_files = []
+
+                for uf in uploaded_files:
+                    path = os.path.join("data/papers", uf.name)
+                    with open(path, "wb") as f:
+                        f.write(uf.getbuffer())
+
+                    # ── Content dedup: check hash ──
+                    file_hash = compute_file_hash(path)
+                    if uf.name in existing_names or file_hash in existing_hashes:
+                        skipped.append(uf.name)
+                        if uf.name not in existing_names:
+                            os.remove(path)  # clean up duplicate under different name
+                        continue
+                    new_files.append((uf.name, path, file_hash))
 
                 if skipped:
-                    st.info(f"⏭️ Skipped: {', '.join(skipped)}")
+                    st.info(f"⏭️ Skipped {len(skipped)} duplicate(s): {', '.join(skipped[:5])}"
+                            f"{'...' if len(skipped) > 5 else ''}")
 
                 if not new_files:
-                    st.warning("All already indexed.")
+                    st.warning("All files already indexed (or duplicates).")
                 else:
                     papers = []
                     failed = []
-                    for uf in new_files:
-                        path = os.path.join("data/papers", uf.name)
-                        with open(path, "wb") as f:
-                            f.write(uf.getbuffer())
+                    paper_metas = {}
+
+                    for name, path, file_hash in new_files:
                         text = load_pdf_text(path)
                         if text.strip():
-                            papers.append({"name": uf.name, "text": text})
+                            papers.append({"name": name, "text": text, "path": path})
+                            meta = load_pdf_meta(path)
+                            meta["file_hash"] = file_hash
+                            paper_metas[name] = meta
                         else:
-                            failed.append(uf.name)
+                            failed.append(name)
 
                     if not papers:
                         st.error("No extractable text found.")
@@ -393,14 +312,32 @@ with st.sidebar:
                             st.warning(f"❌ `{name}` — scanned PDF?")
                     else:
                         progress = st.progress(0, "Chunking...")
-                        chunks = chunk_papers(papers)
-                        progress.progress(30, "Embedding...")
+                        chunks = chunk_papers(papers, extract_tables=True)
+
+                        progress.progress(25, "Embedding...")
                         texts = [c["text"] for c in chunks]
                         embeddings = embed_texts(texts)
-                        progress.progress(80, "Storing...")
-                        add_chunks(collection, chunks, embeddings)
+
+                        progress.progress(75, "Storing...")
+                        # Store per-paper metadata with each chunk
+                        for c in chunks:
+                            meta = paper_metas.get(c["paper_name"], {})
+                            c["_paper_meta"] = meta
+
+                        # Build full paper_meta dict for add_chunks
+                        full_meta = {}
+                        for c in chunks:
+                            if c["paper_name"] in paper_metas:
+                                full_meta = paper_metas[c["paper_name"]]
+                                break
+
+                        add_chunks(collection, chunks, embeddings, paper_meta=full_meta)
                         progress.progress(100, "Done!")
-                        st.success(f"✅ {len(papers)} papers · {len(chunks)} chunks")
+                        table_count = sum(1 for c in chunks if c.get("is_table"))
+                        msg = f"✅ {len(papers)} papers · {len(chunks)} chunks"
+                        if table_count:
+                            msg += f" · {table_count} tables"
+                        st.success(msg)
                         st.session_state.paper_list = None
                         st.rerun()
 
@@ -469,21 +406,24 @@ with st.sidebar:
                 st.session_state.paper_list = None
                 st.rerun()
 
-    # ── Model Settings ──
+    # ── Settings ──
     st.divider()
     st.markdown("### ⚙️ Settings")
+
     model_choice = st.selectbox(
-        "Model",
-        ["deepseek-chat", "deepseek-reasoner"],
-        index=0,
-        label_visibility="collapsed",
+        "Model", ["deepseek-chat", "deepseek-reasoner"],
+        index=0, label_visibility="collapsed",
     )
     temperature = st.slider(
-        "Temperature",
-        min_value=0.0, max_value=1.0, value=0.3, step=0.1,
+        "Temperature", min_value=0.0, max_value=1.0, value=0.3, step=0.1,
         label_visibility="collapsed",
     )
-    st.caption(f"`{model_choice}` · temp `{temperature}`")
+
+    # Hybrid search toggle
+    use_hybrid = st.checkbox("🔀 Hybrid search (BM25 + Dense)", value=True,
+                             help="Combine keyword matching with semantic search via RRF fusion")
+
+    st.caption(f"`{model_choice}` · temp `{temperature}` · {'hybrid' if use_hybrid else 'dense only'}")
 
     if st.button("🗑️ Clear History", use_container_width=True):
         st.session_state.history = []
@@ -491,7 +431,7 @@ with st.sidebar:
         _save_history()
         st.rerun()
 
-    st.markdown('<p class="footer-text">Chroma + BGE + DeepSeek</p>', unsafe_allow_html=True)
+    st.markdown('<p class="footer-text">Chroma + BGE + DeepSeek + BM25</p>', unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════
@@ -500,6 +440,27 @@ with st.sidebar:
 tab1, tab2 = st.tabs(["🔍 Ask", "📜 History"])
 
 with tab1:
+    # ── Metadata filter bar ──
+    if chunk_count > 0:
+        filter_opts = get_filter_options(collection)
+        with st.expander("🔎 Filters", expanded=False):
+            fc1, fc2, fc3 = st.columns(3)
+            with fc1:
+                author_filter = st.selectbox(
+                    "Author", ["All"] + filter_opts.get("authors", []),
+                    key="filter_author",
+                )
+            with fc2:
+                year_filter = st.selectbox(
+                    "Year", ["All"] + filter_opts.get("years", []),
+                    key="filter_year",
+                )
+            with fc3:
+                paper_filter = st.selectbox(
+                    "Paper", ["All"] + filter_opts.get("paper_names", []),
+                    key="filter_paper",
+                )
+
     with st.form("search_form", clear_on_submit=False):
         col_q, col_k, col_btn = st.columns([4, 1, 1])
         with col_q:
@@ -514,17 +475,39 @@ with tab1:
             submitted = st.form_submit_button("🔍 Ask", type="primary", use_container_width=True)
 
     if query and submitted:
+        # ── Build metadata filters ──
+        filters = None
+        if chunk_count > 0:
+            conditions = []
+            if author_filter != "All":
+                conditions.append({"author": author_filter})
+            if year_filter != "All":
+                conditions.append({"year": year_filter})
+            if paper_filter != "All":
+                conditions.append({"paper_name": paper_filter})
+            if len(conditions) == 1:
+                filters = conditions[0]
+            elif len(conditions) > 1:
+                filters = {"$and": conditions}
+
         with st.spinner("Searching papers + generating answer..."):
-            results = retrieve(collection, query, top_k=top_k * 3, max_per_paper=3)
-            results = rerank(query, results, top_k=top_k)
+            results = search_papers(
+                collection, query,
+                top_k=top_k,
+                hybrid=use_hybrid,
+                filters=filters,
+            )
 
         if not results:
-            st.warning("No relevant passages found. Try rephrasing or upload more papers.")
+            st.warning("No relevant passages found. Try rephrasing, adjusting filters, or uploading more papers.")
         else:
             left, right = st.columns([3, 2])
 
             with left:
                 st.markdown("### 📝 Answer")
+
+                # Build context for generator
+                from src.generator import generate_answer_stream
                 answer_div = st.empty()
                 full_text = ""
                 for chunk in generate_answer_stream(
@@ -534,9 +517,12 @@ with tab1:
                     temperature=temperature,
                 ):
                     full_text += chunk
-                    display = full_text.replace("\\(", "$").replace("\\)", "$")
+                    display = full_text.replace(r"\(", "$").replace(r"\)", "$")
                     display = display.replace("\\[", "$$\n").replace("\\]", "\n$$")
-                    answer_div.markdown(f'<div class="answer-container">{display}</div>', unsafe_allow_html=True)
+                    answer_div.markdown(
+                        f'<div class="answer-container">{display}</div>',
+                        unsafe_allow_html=True,
+                    )
 
                 answer = full_text
 
@@ -562,15 +548,18 @@ with tab1:
 
                 for paper_name, chunks_list in by_paper.items():
                     best_rel = max(c["score"] for c in chunks_list)
+                    table_count = sum(1 for c in chunks_list if c.get("is_table"))
                     paper_display = paper_name.rsplit(".", 1)[0][:60]
-                    with st.expander(
-                        f"📄 {paper_display} ({len(chunks_list)} chunks, {best_rel:.0%})",
-                        expanded=False,
-                    ):
-                        for i, c in enumerate(chunks_list):
+                    label = f"📄 {paper_display} ({len(chunks_list)} chunks, {best_rel:.0%})"
+                    if table_count:
+                        label += f" · {table_count} 📊"
+                    with st.expander(label, expanded=False):
+                        for c in chunks_list:
+                            is_table = c.get("is_table", False)
+                            tag = "📊 TABLE" if is_table else "▸"
                             st.markdown(f"""
                             <div class="source-block">
-                              <div class="relevance">▸ Relevance {c['score']:.0%} · Page {c.get('page', '?')}</div>
+                              <div class="relevance">{tag} Relevance {c['score']:.0%} · Page {c.get('page', '?')}</div>
                               <div class="text">{c['text']}</div>
                             </div>
                             """, unsafe_allow_html=True)

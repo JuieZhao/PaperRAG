@@ -4,3 +4,8 @@ chromadb
 openai
 python-dotenv
 sentence-transformers
+numpy
+requests
+arxiv
+feedparser
+gradio
