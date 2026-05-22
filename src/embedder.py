@@ -1,8 +1,17 @@
 """
 Text embedding with model selection, GPU detection, and batch processing.
+
+Optional dependency: sentence-transformers.
+Install with: pip install -r requirements-optional.txt
 """
 import os
-from sentence_transformers import SentenceTransformer
+
+try:
+    from sentence_transformers import SentenceTransformer
+    _HAS_SENTENCE_TRANSFORMERS = True
+except ImportError:
+    _HAS_SENTENCE_TRANSFORMERS = False
+    SentenceTransformer = None  # type: ignore
 
 
 # Registry — ranked by quality/cost
@@ -48,6 +57,12 @@ def _default_model() -> str:
 def get_embedder(model_id: str | None = None):
     """Lazy-load embedding model (global singleton, auto device)."""
     global _model, _model_id
+    if not _HAS_SENTENCE_TRANSFORMERS:
+        raise ImportError(
+            "sentence-transformers is not installed. "
+            "Install with: pip install -r requirements-optional.txt\n"
+            "Or use RETRIEVAL_MODE=bm25 for zero-model retrieval."
+        )
     mid = model_id or _default_model()
     device = get_device()
     if _model is None or _model_id != mid:
@@ -88,7 +103,7 @@ def get_model_info(model_id: str | None = None) -> dict:
     model = get_embedder(mid)
     return {
         "model_id": mid,
-        "dimensions": model.get_sentence_embedding_dimension(),
+        "dimensions": model.get_embedding_dimension(),
         "max_seq_length": model.max_seq_length,
         "device": get_device(),
     }

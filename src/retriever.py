@@ -1,6 +1,10 @@
 """
-Retrieval with paper-level deduplication, optional BM25 hybrid search,
+Retrieval with source-level deduplication, optional BM25 hybrid search,
 cross-encoder reranking, and metadata filtering.
+
+Lightweight by default — reranker and embedding model are both opt-in.
+Set RETRIEVAL_MODE=bm25 for zero-model (BM25-only) retrieval.
+Set ENABLE_RERANK=true to activate cross-encoder reranking.
 """
 import os
 import numpy as np
@@ -12,11 +16,25 @@ _bm25_index: BM25Retriever | None = None
 _bm25_collection_hash: int | None = None  # track when to rebuild
 
 
+def _get_retrieval_mode() -> str:
+    """RETRIEVAL_MODE: 'hybrid' (default), 'bm25', or 'dense'."""
+    mode = os.getenv("RETRIEVAL_MODE", "hybrid").lower()
+    if mode not in ("hybrid", "bm25", "dense"):
+        return "hybrid"
+    return mode
+
+
 def _get_cross_encoder():
     """Lazy-load cross-encoder model for reranking (first call downloads ~120MB)."""
     global _cross_encoder
     if _cross_encoder is None:
-        from sentence_transformers import CrossEncoder
+        try:
+            from sentence_transformers import CrossEncoder
+        except ImportError:
+            raise ImportError(
+                "sentence-transformers is not installed. "
+                "Install with: pip install -r requirements-optional.txt"
+            )
         _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
     return _cross_encoder
 
@@ -65,32 +83,80 @@ def retrieve(
     query: str,
     model_id: str | None = None,
     top_k: int = 5,
-    max_per_paper: int = 2,
+    max_per_source: int = 2,
     hybrid: bool = True,
     bm25_weight: float = 0.5,
     filters: dict | None = None,
+    **kwargs,
 ):
     """
     Retrieve with dedup + optional BM25 hybrid search + metadata filtering.
 
     Parameters:
+        max_per_source: max chunks returned per source document (default: 2)
         hybrid: if True, fuse dense + BM25 via RRF (default: True)
+                Ignored when RETRIEVAL_MODE env var is set.
         bm25_weight: relative weight of BM25 in RRF (0-1, for future use)
         filters: Chroma where clause dict for metadata filtering
                  e.g. {"author": "Smith"} or {"year": {"$gte": "2020"}}
 
-    Returns: [{'text': ..., 'paper_name': ..., 'chunk_id': ..., 'score': ..., 'page': ...}]
+    Returns: [{'text': ..., 'source_name': ..., 'chunk_id': ..., 'score': ..., 'page': ...}]
     """
+    # Backward compat: accept old max_per_paper kwarg
+    if "max_per_paper" in kwargs:
+        max_per_source = kwargs.pop("max_per_paper")
+    mode = _get_retrieval_mode()
     fetch_k = max(top_k * 3, 30)
 
-    # ── Dense retrieval ──
+    # ── BM25-only mode (zero embedding model) ──
+    if mode == "bm25":
+        return _bm25_retrieve(collection, query, fetch_k, max_per_source, filters)
+
+    # ── Dense-only mode ──
+    if mode == "dense":
+        return _dense_retrieve(collection, query, model_id, fetch_k, max_per_source, filters)
+
+    # ── Hybrid mode (default) ──
+    if not hybrid:
+        return _dense_retrieve(collection, query, model_id, fetch_k, max_per_source, filters)
+
+    dense_hits = _dense_retrieve(collection, query, model_id, fetch_k, max_per_source, filters)
+    bm25_hits = _bm25_retrieve(collection, query, fetch_k, max_per_source, filters)
+
+    # ── RRF fusion ──
+    merged = rrf_fuse(dense_hits, bm25_hits, top_k=fetch_k)
+
+    # Re-apply per-source limit post-fusion
+    final = []
+    seen_final: dict[str, int] = {}
+    for r in merged:
+        src = r["source_name"]
+        if seen_final.get(src, 0) >= max_per_source:
+            continue
+        seen_final[src] = seen_final.get(src, 0) + 1
+        final.append(r)
+        if len(final) >= top_k * 3:
+            break
+
+    return final
+
+
+def _dense_retrieve(
+    collection,
+    query: str,
+    model_id: str | None,
+    fetch_k: int,
+    max_per_source: int,
+    filters: dict | None,
+) -> list[dict]:
+    """Dense (embedding) retrieval. Uses sentence-transformers model."""
     query_vec = embed_query(query, model_id)
     chroma_kwargs = {"query_embeddings": [query_vec], "n_results": fetch_k}
     if filters:
         chroma_kwargs["where"] = filters
     results = collection.query(**chroma_kwargs)
 
-    dense_retrieved = []
+    retrieved = []
     seen_counts: dict[str, int] = {}
 
     if results["documents"] and results["documents"][0]:
@@ -99,74 +165,66 @@ def retrieve(
             results["metadatas"][0],
             results["distances"][0],
         ):
-            paper = meta.get("paper_name", "Unknown")
-            if seen_counts.get(paper, 0) >= max_per_paper:
+            src = meta.get("source_name", "Unknown")
+            if seen_counts.get(src, 0) >= max_per_source:
                 continue
-            seen_counts[paper] = seen_counts.get(paper, 0) + 1
-            dense_retrieved.append({
+            seen_counts[src] = seen_counts.get(src, 0) + 1
+            retrieved.append({
                 "text": doc,
-                "paper_name": paper,
+                "source_name": src,
                 "chunk_id": meta.get("chunk_id", -1),
                 "page": meta.get("page", "?"),
                 "score": round(1 - dist, 4) if dist else 0,
             })
 
-    # ── BM25 retrieval (hybrid mode) ──
-    if hybrid:
-        bm25 = _get_bm25(collection)
-        bm25_hits = bm25.search(query, top_k=fetch_k)
-        data = collection.get()
-        bm25_retrieved = []
-        seen_bm25: dict[str, int] = {}
+    return retrieved
 
-        for idx, score in bm25_hits:
-            paper = "Unknown"
-            if data["metadatas"] and idx < len(data["metadatas"]):
-                meta = data["metadatas"][idx]
-                paper = meta.get("paper_name", "Unknown")
-                if filters:
-                    # Apply same filters to BM25 results
-                    mismatch = False
-                    for key, val in filters.items():
-                        if isinstance(val, dict):
-                            if "$gte" in val and str(meta.get(key, "")) < str(val["$gte"]):
-                                mismatch = True
-                        elif meta.get(key, "") != val:
+
+def _bm25_retrieve(
+    collection,
+    query: str,
+    fetch_k: int,
+    max_per_source: int,
+    filters: dict | None,
+) -> list[dict]:
+    """BM25 keyword retrieval. Zero models — pure numpy."""
+    bm25 = _get_bm25(collection)
+    bm25_hits = bm25.search(query, top_k=fetch_k)
+    data = collection.get()
+
+    retrieved = []
+    seen_counts: dict[str, int] = {}
+
+    for idx, score in bm25_hits:
+        src = "Unknown"
+        if data["metadatas"] and idx < len(data["metadatas"]):
+            meta = data["metadatas"][idx]
+            src = meta.get("source_name", "Unknown")
+            if filters:
+                mismatch = False
+                for key, val in filters.items():
+                    if isinstance(val, dict):
+                        if "$gte" in val and str(meta.get(key, "")) < str(val["$gte"]):
                             mismatch = True
-                    if mismatch:
-                        continue
-            if seen_bm25.get(paper, 0) >= max_per_paper:
-                continue
-            seen_bm25[paper] = seen_bm25.get(paper, 0) + 1
-            bm25_retrieved.append({
-                "text": data["documents"][idx] if data["documents"] and idx < len(data["documents"]) else "",
-                "paper_name": paper,
-                "chunk_id": data["metadatas"][idx].get("chunk_id", idx) if data["metadatas"] and idx < len(data["metadatas"]) else idx,
-                "page": data["metadatas"][idx].get("page", "?") if data["metadatas"] and idx < len(data["metadatas"]) else "?",
-                "score": round(float(score), 4),
-            })
-
-        # ── RRF fusion ──
-        retrieved = rrf_fuse(dense_retrieved, bm25_retrieved, top_k=fetch_k)
-    else:
-        retrieved = dense_retrieved
-
-    # Re-apply per-paper limit post-fusion
-    final = []
-    seen_final: dict[str, int] = {}
-    for r in retrieved:
-        paper = r["paper_name"]
-        if seen_final.get(paper, 0) >= max_per_paper:
+                    elif meta.get(key, "") != val:
+                        mismatch = True
+                if mismatch:
+                    continue
+        if seen_counts.get(src, 0) >= max_per_source:
             continue
-        seen_final[paper] = seen_final.get(paper, 0) + 1
-        final.append(r)
-        if len(final) >= top_k * 3:
-            break
+        seen_counts[src] = seen_counts.get(src, 0) + 1
+        retrieved.append({
+            "text": data["documents"][idx] if data["documents"] and idx < len(data["documents"]) else "",
+            "source_name": src,
+            "chunk_id": data["metadatas"][idx].get("chunk_id", idx) if data["metadatas"] and idx < len(data["metadatas"]) else idx,
+            "page": data["metadatas"][idx].get("page", "?") if data["metadatas"] and idx < len(data["metadatas"]) else "?",
+            "score": round(float(score), 4),
+        })
 
-    return final
+    return retrieved
 
 
-def search_papers(
+def search_documents(
     collection,
     query: str,
     model_id: str | None = None,
@@ -175,15 +233,27 @@ def search_papers(
     filters: dict | None = None,
 ) -> list[dict]:
     """
-    Higher-level search: retrieve → rerank → return top_k.
-    This is the recommended entry point for most use cases.
+    Higher-level search: retrieve → [rerank] → return top_k.
+
+    Reranking is opt-in — set ENABLE_RERANK=true to activate.
+    Without it, returns raw retrieval results trimmed to top_k.
     """
     raw = retrieve(
         collection, query,
         model_id=model_id,
         top_k=top_k,
-        max_per_paper=2,
+        max_per_source=2,
         hybrid=hybrid,
         filters=filters,
     )
-    return rerank(query, raw, top_k=top_k)
+
+    # Reranking is opt-in to keep the default stack lightweight
+    if os.getenv("ENABLE_RERANK", "").lower() in ("true", "1", "yes"):
+        return rerank(query, raw, top_k=top_k)
+
+    # Without reranker: just return top_k by retrieval score
+    return raw[:top_k]
+
+
+# ── Backward-compatible alias ──
+search_papers = search_documents

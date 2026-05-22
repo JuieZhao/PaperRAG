@@ -7,7 +7,7 @@ import chromadb
 from chromadb.config import Settings
 
 
-def get_collection(persist_dir: str = "./chroma_db", collection_name: str = "paperrag_docs"):
+def get_collection(persist_dir: str = "./chroma_db", collection_name: str = "minirag_docs"):
     """Get or create Chroma collection."""
     client = chromadb.PersistentClient(
         path=persist_dir,
@@ -20,32 +20,32 @@ def add_chunks(
     collection,
     chunks: list[dict],
     embeddings: list[list[float]],
-    paper_meta: dict | None = None,
+    source_meta: dict | None = None,
 ):
     """
     Add chunks + embeddings to Chroma with extended metadata.
 
-    chunks: [{'paper_name': ..., 'chunk_id': ..., 'text': ..., 'page': ...,
+    chunks: [{'source_name': ..., 'chunk_id': ..., 'text': ..., 'page': ...,
               'is_table': bool (optional)}]
-    paper_meta: optional dict with per-paper metadata:
+    source_meta: optional dict with per-source metadata:
                 {'file_hash': ..., 'author': ..., 'year': ..., 'title': ...}
     """
-    ids = [f"{c['paper_name']}_chunk_{c['chunk_id']}" for c in chunks]
+    ids = [f"{c['source_name']}_chunk_{c['chunk_id']}" for c in chunks]
     documents = [c["text"] for c in chunks]
     metadatas = []
     for c in chunks:
         meta = {
-            "paper_name": c["paper_name"],
+            "source_name": c["source_name"],
             "chunk_id": c["chunk_id"],
             "page": c.get("page", "?"),
             "is_table": c.get("is_table", False),
         }
-        # Merge paper-level metadata into each chunk
-        if paper_meta:
-            meta["author"] = paper_meta.get("author", "")
-            meta["year"] = paper_meta.get("year", "")
-            meta["file_hash"] = paper_meta.get("file_hash", "")
-            meta["paper_title"] = paper_meta.get("title", "")
+        # Merge source-level metadata into each chunk
+        if source_meta:
+            meta["author"] = source_meta.get("author", "")
+            meta["year"] = source_meta.get("year", "")
+            meta["file_hash"] = source_meta.get("file_hash", "")
+            meta["source_title"] = source_meta.get("title", "")
         metadatas.append(meta)
 
     # Batch insert
@@ -64,31 +64,31 @@ def get_chunk_count(collection) -> int:
     return collection.count()
 
 
-def get_paper_names(collection) -> list[str]:
-    """Return sorted list of all indexed paper names (deduplicated)."""
+def get_source_names(collection) -> list[str]:
+    """Return sorted list of all indexed source names (deduplicated)."""
     all_data = collection.get()
-    papers_set = set()
+    sources_set = set()
     if all_data["metadatas"]:
         for m in all_data["metadatas"]:
-            papers_set.add(m.get("paper_name", "?"))
-    return sorted(papers_set)
+            sources_set.add(m.get("source_name", "?"))
+    return sorted(sources_set)
 
 
-def get_paper_meta_map(collection) -> dict[str, dict]:
+def get_source_meta_map(collection) -> dict[str, dict]:
     """
-    Return {paper_name: {author, year, file_hash, paper_title}} for all papers.
+    Return {source_name: {author, year, file_hash, source_title}} for all sources.
     """
     all_data = collection.get()
     meta_map: dict[str, dict] = {}
     if all_data["metadatas"]:
         for m in all_data["metadatas"]:
-            name = m.get("paper_name", "?")
+            name = m.get("source_name", "?")
             if name not in meta_map:
                 meta_map[name] = {
                     "author": m.get("author", ""),
                     "year": m.get("year", ""),
                     "file_hash": m.get("file_hash", ""),
-                    "paper_title": m.get("paper_title", ""),
+                    "source_title": m.get("source_title", ""),
                 }
     return meta_map
 
@@ -105,9 +105,9 @@ def get_file_hashes(collection) -> set[str]:
     return hashes
 
 
-def delete_paper(collection, paper_name: str) -> int:
-    """Delete all chunks for a paper. Returns count of deleted chunks."""
-    result = collection.get(where={"paper_name": paper_name})
+def delete_source(collection, source_name: str) -> int:
+    """Delete all chunks for a source. Returns count of deleted chunks."""
+    result = collection.get(where={"source_name": source_name})
     ids_to_delete = result["ids"]
     if ids_to_delete:
         collection.delete(ids=ids_to_delete)
@@ -117,21 +117,27 @@ def delete_paper(collection, paper_name: str) -> int:
 def get_filter_options(collection) -> dict:
     """
     Return available filter values for UI dropdowns.
-    {'authors': [...], 'years': [...], 'paper_names': [...]}
+    {'authors': [...], 'years': [...], 'source_names': [...]}
     """
     all_data = collection.get()
     authors = set()
     years = set()
-    paper_names = set()
+    source_names = set()
     if all_data["metadatas"]:
         for m in all_data["metadatas"]:
             if m.get("author"):
                 authors.add(m["author"])
             if m.get("year"):
                 years.add(m["year"])
-            paper_names.add(m.get("paper_name", "?"))
+            source_names.add(m.get("source_name", "?"))
     return {
         "authors": sorted(authors),
         "years": sorted(years, reverse=True),
-        "paper_names": sorted(paper_names),
+        "source_names": sorted(source_names),
     }
+
+
+# ── Backward-compatible aliases ──
+get_paper_names = get_source_names
+get_paper_meta_map = get_source_meta_map
+delete_paper = delete_source

@@ -1,9 +1,18 @@
-# PaperRAG Architecture Decisions
+# MiniRAG Architecture Decisions
 
-> Grill-with-docs: read this before writing code for PaperRAG.
+> Grill-with-docs: read this before writing code for MiniRAG.
 
 ## What we're building
-A local-first RAG system for academic papers. Users upload PDFs, ask questions, get answers with citations.
+A lightweight, general-purpose RAG system for documents. Users upload files (PDFs, text, spreadsheets), ask questions, get answers with citations. Zero-model baseline, scaling up only when needed.
+
+## Core philosophy
+
+**Lightweight-first.** We cannot and should not compete with large RAG projects on model-driven features. Every model added is a tax on startup time, memory, and complexity. Prefer zero-model solutions; only add models when there is clear, verifiable benefit.
+
+Model gradient (least → most):
+- `RETRIEVAL_MODE=bm25` → **zero models**, pure keyword search, instant startup. No extra deps.
+- `RETRIEVAL_MODE=hybrid` → **one model** (embedding), balanced precision/recall. Needs `pip install -r requirements-optional.txt`
+- `+ENABLE_RERANK=true` → **two models** (embedding + cross-encoder), highest precision.
 
 ## Core design decisions
 
@@ -50,10 +59,12 @@ A local-first RAG system for academic papers. Users upload PDFs, ask questions, 
 | Chunking | Custom section-split | LangChain text splitter | Preserves paper structure |
 | DB | Chroma | FAISS, Milvus | Simplest persistent local store |
 | BM25 | Custom numpy impl | rank_bm25, sklearn | Zero extra deps, fast enough for <10k docs |
-| Reranker | ms-marco-MiniLM-L-6-v2 | BGE-reranker | Lightweight, good English performance |
+| Reranker | ms-marco-MiniLM-L-6-v2 (opt-in) | BGE-reranker | Set ENABLE_RERANK=true; stays off by default for lightweight startup |
 
 ## Known issues
 - bge-small-zh has low recall on English papers (scores 0.08-0.40). **→ Set EMBEDDING_MODEL=english.**
+- **Chroma collection renamed from `paperrag_docs` → `minirag_docs`.** Old databases need re-indexing (or rename the collection manually).
+- **Metadata key renamed from `paper_name` → `source_name`, `paper_title` → `source_title`.** Existing Chroma DBs will have old keys; re-index after upgrading.
 - Chroma version upgrades break old databases. Need migration path.
 - Table extraction requires PyMuPDF >= 1.23.0 (silently falls back).
 - BM25 index rebuilds on collection change (lazy, but could be slow for very large DBs).
@@ -65,5 +76,5 @@ A local-first RAG system for academic papers. Users upload PDFs, ask questions, 
 - `gradio_app.py` = Gradio chat UI
 - `test_pipeline.py` = end-to-end test
 - `download_papers.py` = arXiv API + RSS + manual downloads
-- `data/papers/` = user's PDFs
+- `data/documents/` = user's files (PDF, TXT, etc.)
 - `chroma_db/` = vector store (gitignored)

@@ -43,7 +43,7 @@ class BM25Retriever:
         Build BM25 index from a list of document strings.
 
         documents: list of chunk texts
-        metadatas: optional list of metadata dicts (paper_name, page, etc.)
+        metadatas: optional list of metadata dicts (source_name, page, etc.)
         """
         self._corpus = [self._tokenize(doc) for doc in documents]
         self._metadata = metadatas or [{}] * len(documents)
@@ -130,7 +130,7 @@ def rrf_fuse(
     results_map: dict[str, dict] = {}
 
     def _key(r: dict) -> str:
-        return f"{r.get('paper_name', '')}::{r.get('chunk_id', hash(r['text']))}"
+        return f"{r.get('source_name', '')}::{r.get('chunk_id', hash(r['text']))}"
 
     for rank, r in enumerate(dense_results):
         key = _key(r)

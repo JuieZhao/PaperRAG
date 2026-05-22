@@ -22,14 +22,14 @@ def get_client():
     return _client
 
 
-SYSTEM_PROMPT = """You are an academic research assistant. Answer questions based on provided literature excerpts and conversation context.
+SYSTEM_PROMPT = """You are a document analysis assistant. Answer questions based on provided document excerpts and conversation context.
 
 Requirements:
-1. Base your answer on the provided literature content — do not fabricate
-2. Cite sources by paper name AND page number when referencing them (e.g. "(Smith et al., p.23)")
-3. If the literature does not contain relevant information, honestly state so
+1. Base your answer on the provided document content — do not fabricate
+2. Cite sources by document name when referencing them (e.g. "(source: report.pdf, page 23)")
+3. If the documents do not contain relevant information, honestly state so
 4. Answer in the same language as the question
-5. You may supplement with your domain knowledge, but clearly distinguish what comes from the literature vs. your knowledge
+5. You may supplement with your domain knowledge, but clearly distinguish what comes from the documents vs. your knowledge
 6. When the user asks follow-up questions (e.g. "explain more", "what about X"), refer to the previous conversation context"""
 
 
@@ -38,7 +38,7 @@ def _build_context(retrieved_chunks: list[dict]) -> str:
     parts = []
     for i, chunk in enumerate(retrieved_chunks):
         parts.append(
-            f"[Source {i+1}] Paper: {chunk['paper_name']} (p.{chunk.get('page', '?')})\n{chunk['text']}"
+            f"[Source {i+1}] Document: {chunk['source_name']} (page {chunk.get('page', '?')})\n{chunk['text']}"
         )
     return "\n\n---\n\n".join(parts)
 
@@ -65,10 +65,10 @@ def _build_messages(
         "content": f"""## Question
 {query}
 
-## Relevant Literature Excerpts
+## Relevant Document Excerpts
 {context}
 
-Please answer the question based on the above literature excerpts."""
+Please answer the question based on the above document excerpts."""
     })
 
     return messages
@@ -111,7 +111,7 @@ def generate_answer(
     Returns answer string, or error message on failure.
     """
     if not retrieved_chunks:
-        return "No relevant literature found to answer this question."
+        return "No relevant documents found to answer this question."
 
     try:
         client = get_client()
@@ -139,7 +139,7 @@ def generate_answer_stream(
     Yields text fragments; yields error strings prefixed with ⚠️ on failure.
     """
     if not retrieved_chunks:
-        yield "No relevant literature found to answer this question."
+        yield "No relevant documents found to answer this question."
         return
 
     try:

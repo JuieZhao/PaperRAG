@@ -1,5 +1,5 @@
 """
-PaperRAG — 论文知识检索库 · 北极甜虾 Design Edition
+MiniRAG — 轻量级文档知识检索 · 北极甜虾 Design Edition
 Streamlit UI: dark academic theme, hybrid search, metadata filtering
 """
 import os
@@ -12,17 +12,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.loader import load_pdf_text, load_pdf_meta, chunk_papers, compute_file_hash
+from src.loader import load_pdf_text, load_pdf_meta, chunk_documents, compute_file_hash
 from src.embedder import embed_texts, get_model_info
 from src.vector_store import (
-    get_collection, add_chunks, get_chunk_count, get_paper_names,
-    delete_paper, get_file_hashes, get_filter_options,
+    get_collection, add_chunks, get_chunk_count, get_source_names,
+    delete_source, get_file_hashes, get_filter_options,
 )
-from src.retriever import search_papers
+from src.retriever import search_documents
 
 HISTORY_FILE = "data/qa_history.json"
 
-st.set_page_config(page_title="PaperRAG", page_icon="📄", layout="wide")
+st.set_page_config(page_title="MiniRAG", page_icon="📄", layout="wide")
 
 # ═══════════════════════════════════════════
 #  Custom CSS — Dark Academic Theme
@@ -194,14 +194,14 @@ with col_title:
     st.markdown("""
     <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;">
       <span style="font-family:'Source Serif 4',serif;font-size:2rem;font-weight:700;color:#e2e6ed;">
-        Paper<span style="color:#5b8def;">RAG</span>
+        Mini<span style="color:#5b8def;">RAG</span>
       </span>
       <span style="font-family:'JetBrains Mono',monospace;font-size:0.6rem;color:#5a6e88;letter-spacing:0.15em;">
         HYBRID EDITION
       </span>
     </div>
     <p style="color:#8899b4;font-size:0.82rem;margin-top:0;">
-      Your papers, your knowledge. Hybrid BM25 + Dense retrieval.
+      Your documents, your knowledge. Hybrid BM25 + Dense retrieval.
     </p>
     """, unsafe_allow_html=True)
 
@@ -222,9 +222,9 @@ with st.sidebar:
       </div>
       <div style="flex:1;background:#1a2230;border:1px solid rgba(99,130,180,.15);border-radius:8px;padding:12px 14px;text-align:center;">
         <div style="font-family:'JetBrains Mono',monospace;font-size:1.3rem;font-weight:700;color:#4ec9a8;">
-          {len(st.session_state.get('paper_list') or get_paper_names(collection)):,}
+          {len(st.session_state.get('source_list') or get_source_names(collection)):,}
         </div>
-        <div style="font-size:0.62rem;color:#5a6e88;letter-spacing:.06em;margin-top:2px;">PAPERS</div>
+        <div style="font-size:0.62rem;color:#5a6e88;letter-spacing:.06em;margin-top:2px;">DOCUMENTS</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -252,20 +252,20 @@ with st.sidebar:
     st.divider()
 
     # ── Upload ──
-    st.markdown("### 📤 Upload Papers")
+    st.markdown("### 📤 Upload Documents")
     uploaded_files = st.file_uploader(
         "Choose PDF files", type="pdf", accept_multiple_files=True,
         label_visibility="collapsed",
     )
 
     if uploaded_files:
-        if st.button("⚡ Index Papers", type="primary", use_container_width=True):
+        if st.button("⚡ Index Documents", type="primary", use_container_width=True):
             with st.spinner("Parsing + embedding..."):
                 os.makedirs("data/papers", exist_ok=True)
 
-                if "paper_list" not in st.session_state or st.session_state.paper_list is None:
-                    st.session_state.paper_list = get_paper_names(collection)
-                existing_names = set(st.session_state.paper_list)
+                if "source_list" not in st.session_state or st.session_state.source_list is None:
+                    st.session_state.source_list = get_source_names(collection)
+                existing_names = set(st.session_state.source_list)
                 existing_hashes = get_file_hashes(collection)
 
                 skipped = []
@@ -294,7 +294,7 @@ with st.sidebar:
                 else:
                     papers = []
                     failed = []
-                    paper_metas = {}
+                    source_metas = {}
 
                     for name, path, file_hash in new_files:
                         text = load_pdf_text(path)
@@ -302,7 +302,7 @@ with st.sidebar:
                             papers.append({"name": name, "text": text, "path": path})
                             meta = load_pdf_meta(path)
                             meta["file_hash"] = file_hash
-                            paper_metas[name] = meta
+                            source_metas[name] = meta
                         else:
                             failed.append(name)
 
@@ -312,7 +312,7 @@ with st.sidebar:
                             st.warning(f"❌ `{name}` — scanned PDF?")
                     else:
                         progress = st.progress(0, "Chunking...")
-                        chunks = chunk_papers(papers, extract_tables=True)
+                        chunks = chunk_documents(papers, extract_tables=True)
 
                         progress.progress(25, "Embedding...")
                         texts = [c["text"] for c in chunks]
@@ -321,57 +321,57 @@ with st.sidebar:
                         progress.progress(75, "Storing...")
                         # Store per-paper metadata with each chunk
                         for c in chunks:
-                            meta = paper_metas.get(c["paper_name"], {})
-                            c["_paper_meta"] = meta
+                            meta = source_metas.get(c["source_name"], {})
+                            c["_source_meta"] = meta
 
-                        # Build full paper_meta dict for add_chunks
+                        # Build full source_meta dict for add_chunks
                         full_meta = {}
                         for c in chunks:
-                            if c["paper_name"] in paper_metas:
-                                full_meta = paper_metas[c["paper_name"]]
+                            if c["source_name"] in source_metas:
+                                full_meta = source_metas[c["source_name"]]
                                 break
 
-                        add_chunks(collection, chunks, embeddings, paper_meta=full_meta)
+                        add_chunks(collection, chunks, embeddings, source_meta=full_meta)
                         progress.progress(100, "Done!")
                         table_count = sum(1 for c in chunks if c.get("is_table"))
-                        msg = f"✅ {len(papers)} papers · {len(chunks)} chunks"
+                        msg = f"✅ {len(papers)} documents · {len(chunks)} chunks"
                         if table_count:
                             msg += f" · {table_count} tables"
                         st.success(msg)
-                        st.session_state.paper_list = None
+                        st.session_state.source_list = None
                         st.rerun()
 
-    # ── Paper Library ──
+    # ── Document Library ──
     if chunk_count > 0:
         st.divider()
         st.markdown("### 📚 Library")
 
-        if st.session_state.get("paper_list") is None or get_chunk_count(collection) != chunk_count:
-            st.session_state.paper_list = get_paper_names(collection)
-            st.session_state.paper_meta = {}
+        if st.session_state.get("source_list") is None or get_chunk_count(collection) != chunk_count:
+            st.session_state.source_list = get_source_names(collection)
+            st.session_state.source_meta = {}
 
-        paper_names = st.session_state.paper_list
+        source_names = st.session_state.source_list
 
-        if "paper_meta" not in st.session_state:
-            st.session_state.paper_meta = {}
-        for p in paper_names:
-            if p not in st.session_state.paper_meta:
+        if "source_meta" not in st.session_state:
+            st.session_state.source_meta = {}
+        for p in source_names:
+            if p not in st.session_state.source_meta:
                 path = os.path.join("data/papers", p)
                 if os.path.exists(path):
-                    st.session_state.paper_meta[p] = load_pdf_meta(path)
+                    st.session_state.source_meta[p] = load_pdf_meta(path)
                 else:
-                    st.session_state.paper_meta[p] = {"title": "", "author": "", "year": ""}
+                    st.session_state.source_meta[p] = {"title": "", "author": "", "year": ""}
 
-        if len(paper_names) > 5:
+        if len(source_names) > 5:
             filter_text = st.text_input(
-                "Filter", placeholder=f"Search {len(paper_names)} papers...",
+                "Filter", placeholder=f"Search {len(source_names)} documents...",
                 label_visibility="collapsed",
             )
             if filter_text:
-                paper_names = [p for p in paper_names if filter_text.lower() in p.lower()]
+                source_names = [p for p in source_names if filter_text.lower() in p.lower()]
 
-        for p in paper_names[:20]:
-            meta = st.session_state.paper_meta.get(p, {})
+        for p in source_names[:20]:
+            meta = st.session_state.source_meta.get(p, {})
             title = meta.get("title") or p.rsplit(".", 1)[0][:80]
             author = meta.get("author", "")
             year = meta.get("year", "")
@@ -387,23 +387,23 @@ with st.sidebar:
             </div>
             """, unsafe_allow_html=True)
 
-        if len(paper_names) > 20:
-            st.caption(f"... and {len(paper_names) - 20} more")
+        if len(source_names) > 20:
+            st.caption(f"... and {len(source_names) - 20} more")
 
         # ── Delete papers ──
         st.divider()
         st.markdown("### 🗑️ Remove")
         selected = []
-        for p in paper_names:
+        for p in source_names:
             if st.checkbox(p, key=f"del_{p}"):
                 selected.append(p)
         if selected:
-            if st.button(f"Delete {len(selected)} paper(s)", type="primary", use_container_width=True):
+            if st.button(f"Delete {len(selected)} document(s)", type="primary", use_container_width=True):
                 total = 0
                 for p in selected:
-                    total += delete_paper(collection, p)
+                    total += delete_source(collection, p)
                 st.success(f"Removed {total} chunks")
-                st.session_state.paper_list = None
+                st.session_state.source_list = None
                 st.rerun()
 
     # ── Settings ──
@@ -456,8 +456,8 @@ with tab1:
                     key="filter_year",
                 )
             with fc3:
-                paper_filter = st.selectbox(
-                    "Paper", ["All"] + filter_opts.get("paper_names", []),
+                source_filter = st.selectbox(
+                    "Paper", ["All"] + filter_opts.get("source_names", []),
                     key="filter_paper",
                 )
 
@@ -483,15 +483,15 @@ with tab1:
                 conditions.append({"author": author_filter})
             if year_filter != "All":
                 conditions.append({"year": year_filter})
-            if paper_filter != "All":
-                conditions.append({"paper_name": paper_filter})
+            if source_filter != "All":
+                conditions.append({"source_name": source_filter})
             if len(conditions) == 1:
                 filters = conditions[0]
             elif len(conditions) > 1:
                 filters = {"$and": conditions}
 
-        with st.spinner("Searching papers + generating answer..."):
-            results = search_papers(
+        with st.spinner("Searching documents + generating answer..."):
+            results = search_documents(
                 collection, query,
                 top_k=top_k,
                 hybrid=use_hybrid,
@@ -499,7 +499,7 @@ with tab1:
             )
 
         if not results:
-            st.warning("No relevant passages found. Try rephrasing, adjusting filters, or uploading more papers.")
+            st.warning("No relevant passages found. Try rephrasing, adjusting filters, or uploading more documents.")
         else:
             left, right = st.columns([3, 2])
 
@@ -530,27 +530,27 @@ with tab1:
                 copy_text = answer + "\n\n---\n### Sources\n"
                 seen = set()
                 for r in results:
-                    if r["paper_name"] not in seen:
-                        copy_text += f"- {r['paper_name']} (p.{r.get('page', '?')}, rel: {r['score']:.0%})\n"
-                        seen.add(r["paper_name"])
+                    if r["source_name"] not in seen:
+                        copy_text += f"- {r['source_name']} (p.{r.get('page', '?')}, rel: {r['score']:.0%})\n"
+                        seen.add(r["source_name"])
                 st.download_button(
                     "📋 Export Markdown",
                     data=copy_text,
-                    file_name="paperrag_answer.md",
+                    file_name="minirag_answer.md",
                     mime="text/markdown",
                 )
 
             with right:
                 st.markdown("### 📚 Sources")
-                by_paper = defaultdict(list)
+                by_source = defaultdict(list)
                 for r in results:
-                    by_paper[r["paper_name"]].append(r)
+                    by_source[r["source_name"]].append(r)
 
-                for paper_name, chunks_list in by_paper.items():
+                for source_name, chunks_list in by_source.items():
                     best_rel = max(c["score"] for c in chunks_list)
                     table_count = sum(1 for c in chunks_list if c.get("is_table"))
-                    paper_display = paper_name.rsplit(".", 1)[0][:60]
-                    label = f"📄 {paper_display} ({len(chunks_list)} chunks, {best_rel:.0%})"
+                    source_display = source_name.rsplit(".", 1)[0][:60]
+                    label = f"📄 {source_display} ({len(chunks_list)} chunks, {best_rel:.0%})"
                     if table_count:
                         label += f" · {table_count} 📊"
                     with st.expander(label, expanded=False):
@@ -592,9 +592,10 @@ with tab2:
                 st.caption("—" * 20)
                 seen = set()
                 for s in sources:
-                    if s["paper_name"] not in seen:
-                        st.caption(f"📄 {s['paper_name']}")
-                        seen.add(s["paper_name"])
+                    name = s.get("source_name") or s.get("paper_name", "?")
+                    if name not in seen:
+                        st.caption(f"📄 {name}")
+                        seen.add(name)
                 if st.button("🗑️ Remove", key=f"del_hist_{ts}"):
                     st.session_state.history.pop(actual_idx)
                     msg_idx = actual_idx * 2

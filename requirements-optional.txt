@@ -1,0 +1,4 @@
+# Optional: embedding + reranking models
+# Install only if you use RETRIEVAL_MODE=dense or RETRIEVAL_MODE=hybrid
+# Not needed for BM25-only mode (RETRIEVAL_MODE=bm25)
+sentence-transformers

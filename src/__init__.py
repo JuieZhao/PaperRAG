@@ -1,1 +1,1 @@
-# PaperRAG - Paper-based RAG Knowledge System
+# MiniRAG — Lightweight Document RAG System

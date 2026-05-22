@@ -1,6 +1,6 @@
 """
-PDF loader with citation-aware chunking and table extraction.
-Splits on paper structure (sections, paragraphs) instead of raw character counts.
+Document loader with structure-aware chunking and table extraction.
+Splits on document structure (sections, paragraphs) instead of raw character counts.
 """
 from __future__ import annotations
 
@@ -132,17 +132,17 @@ def load_pdf_meta(file_path: str) -> dict:
 
 def load_pdfs_from_dir(dir_path: str) -> list[dict]:
     """Load all PDFs from a directory. Returns [{'name': ..., 'text': ...}]."""
-    papers = []
+    documents = []
     for fname in os.listdir(dir_path):
         if fname.endswith(".pdf"):
             full_path = os.path.join(dir_path, fname)
             text = load_pdf_text(full_path)
             if text.strip():
-                papers.append({"name": fname, "text": text, "path": full_path})
-    return papers
+                documents.append({"name": fname, "text": text, "path": full_path})
+    return documents
 
 
-# ── Citation-aware chunking ──────────────────────────────────
+# ── Structure-aware chunking ─────────────────────────────────
 
 _PAGE_RE = re.compile(r"\[PAGE_(\d+)\]")
 
@@ -170,7 +170,7 @@ SECTION_PATTERNS = re.compile(
 
 def split_on_sections(text: str) -> list[str]:
     """
-    Split text on common academic section headers.
+    Split text on common section headers.
     Sections that are too long are further split by paragraphs.
     """
     matches = list(SECTION_PATTERNS.finditer(text))
@@ -208,28 +208,28 @@ def _split_paragraphs(text: str, max_chars: int = 1200) -> list[str]:
     return chunks
 
 
-def chunk_papers(
-    papers: list[dict],
+def chunk_documents(
+    documents: list[dict],
     extract_tables: bool = True,
 ) -> list[dict]:
     """
-    Citation-aware chunking pipeline with optional table extraction:
-    1. Split each paper into sections
+    Structure-aware chunking pipeline with optional table extraction:
+    1. Split each document into sections
     2. Split oversized sections into paragraphs
     3. Optionally extract tables and append as separate chunks
 
-    papers: [{'name': ..., 'text': ..., 'path'?: ...}]
-    Returns: [{'paper_name': ..., 'chunk_id': ..., 'text': ..., 'page': ...,
+    documents: [{'name': ..., 'text': ..., 'path'?: ...}]
+    Returns: [{'source_name': ..., 'chunk_id': ..., 'text': ..., 'page': ...,
                'is_table': bool}]
     """
     chunks = []
     chunk_id = 0
 
-    for paper in papers:
-        sections = split_on_sections(paper["text"])
+    for doc in documents:
+        sections = split_on_sections(doc["text"])
 
         if not sections or len(sections) == 1:
-            sections = _split_paragraphs(paper["text"])
+            sections = _split_paragraphs(doc["text"])
 
         for section in sections:
             if len(section) > 2000:
@@ -237,7 +237,7 @@ def chunk_papers(
                 for sub_text in sub:
                     if sub_text.strip() and len(sub_text) > 50:
                         chunks.append({
-                            "paper_name": paper["name"],
+                            "source_name": doc["name"],
                             "chunk_id": chunk_id,
                             "text": _strip_page_markers(sub_text.strip()),
                             "page": _extract_pages(sub_text.strip()),
@@ -247,7 +247,7 @@ def chunk_papers(
             else:
                 if section.strip() and len(section) > 50:
                     chunks.append({
-                        "paper_name": paper["name"],
+                        "source_name": doc["name"],
                         "chunk_id": chunk_id,
                         "text": _strip_page_markers(section.strip()),
                         "page": _extract_pages(section.strip()),
@@ -256,15 +256,15 @@ def chunk_papers(
                     chunk_id += 1
 
         # ── Table extraction ──
-        if extract_tables and "path" in paper:
-            tables = extract_tables_from_pdf(paper["path"])
+        if extract_tables and "path" in doc:
+            tables = extract_tables_from_pdf(doc["path"])
             for t in tables:
                 table_text = (
                     f"[TABLE from page {t['page']} — {t['rows']}×{t['cols']}]\n"
                     f"{t['markdown']}"
                 )
                 chunks.append({
-                    "paper_name": paper["name"],
+                    "source_name": doc["name"],
                     "chunk_id": chunk_id,
                     "text": table_text,
                     "page": str(t["page"]),
@@ -273,3 +273,7 @@ def chunk_papers(
                 chunk_id += 1
 
     return chunks
+
+
+# ── Backward-compatible alias ──
+chunk_papers = chunk_documents
