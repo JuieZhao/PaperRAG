@@ -38,6 +38,18 @@
 pip install -r requirements.txt
 ```
 
+如果要使用语义检索和可选重排序，再安装模型依赖：
+
+```bash
+pip install -r requirements-optional.txt
+```
+
+如果不安装可选依赖，可以使用 BM25-only 模式：
+
+```bash
+RETRIEVAL_MODE=bm25 streamlit run main.py
+```
+
 ### 2. 运行应用
 
 ```bash
@@ -59,6 +71,7 @@ streamlit run main.py
 MiniRAG/
 ├── main.py                  # Streamlit 前端
 ├── requirements.txt
+├── requirements-optional.txt # 本地 embedding / 重排序模型依赖
 ├── .env.example
 ├── documents/               # 待上传/索引的文件
 ├── test_pipeline.py         # 端到端测试
@@ -93,6 +106,8 @@ MiniRAG/
 ```bash
 DEEPSEEK_API_KEY=sk-xxx
 EMBEDDING_MODEL=english     # 英文文档推荐
+# RETRIEVAL_MODE=hybrid     # hybrid（默认）、dense 或 bm25
+# ENABLE_RERANK=true        # 可选 Cross-encoder 重排序
 # EMBEDDING_DEVICE=cuda     # 默认自动检测
 # HTTP_PROXY=http://127.0.0.1:7890  # 代理
 ```

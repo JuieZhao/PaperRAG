@@ -38,6 +38,18 @@ Upload documents, ask questions in natural language, get cited answers grounded 
 pip install -r requirements.txt
 ```
 
+For semantic retrieval and optional reranking, install the model extras:
+
+```bash
+pip install -r requirements-optional.txt
+```
+
+Without the optional dependencies, run in BM25-only mode:
+
+```bash
+RETRIEVAL_MODE=bm25 streamlit run main.py
+```
+
 ### 2. Run the app
 
 ```bash
@@ -59,6 +71,7 @@ You can also put files directly in `documents/` before indexing.
 MiniRAG/
 ├── main.py                  # Streamlit UI
 ├── requirements.txt
+├── requirements-optional.txt # Local embedding/reranking models
 ├── .env.example
 ├── documents/               # Files to upload/index
 ├── test_pipeline.py         # End-to-end pipeline test
@@ -93,6 +106,8 @@ Create a `.env` file:
 ```bash
 DEEPSEEK_API_KEY=sk-xxx
 EMBEDDING_MODEL=english     # Recommended for English documents
+# RETRIEVAL_MODE=hybrid     # hybrid (default), dense, or bm25
+# ENABLE_RERANK=true        # Optional cross-encoder reranking
 # EMBEDDING_DEVICE=cuda     # Auto-detected by default
 # HTTP_PROXY=http://127.0.0.1:7890  # Behind firewall
 ```
