@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import re
 import hashlib
+import csv
 import fitz  # pymupdf
 
 
@@ -33,6 +34,68 @@ def load_pdf_text(file_path: str) -> str:
     except Exception as e:
         print(f"  WARN: Failed to parse {file_path}: {e}")
         return ""
+
+
+def load_docx_text(file_path: str) -> str:
+    """Extract paragraphs and tables from a DOCX file."""
+    try:
+        from docx import Document
+    except ImportError as e:
+        raise ImportError("python-docx is required for DOCX support. Install with: pip install python-docx") from e
+
+    try:
+        doc = Document(file_path)
+        parts: list[str] = []
+
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if text:
+                parts.append(text)
+
+        for table_index, table in enumerate(doc.tables, 1):
+            rows = []
+            for row in table.rows:
+                cells = [cell.text.replace("\n", " ").strip() for cell in row.cells]
+                if any(cells):
+                    rows.append(cells)
+            if rows:
+                parts.append(f"[TABLE_{table_index}]\n{_table_rows_to_markdown(rows)}")
+
+        return "\n\n".join(parts)
+    except Exception as e:
+        print(f"  WARN: Failed to parse {file_path}: {e}")
+        return ""
+
+
+def load_text_file(file_path: str) -> str:
+    """Load TXT/Markdown/CSV text with a few common encodings."""
+    suffix = os.path.splitext(file_path)[1].lower()
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            if suffix == ".csv":
+                return _load_csv_as_markdown(file_path, encoding)
+            with open(file_path, "r", encoding=encoding) as f:
+                return f.read()
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            print(f"  WARN: Failed to parse {file_path}: {e}")
+            return ""
+    print(f"  WARN: Failed to decode {file_path}")
+    return ""
+
+
+def load_document_text(file_path: str) -> str:
+    """Extract text from a supported document path."""
+    suffix = os.path.splitext(file_path)[1].lower()
+    if suffix == ".pdf":
+        return load_pdf_text(file_path)
+    if suffix == ".docx":
+        return load_docx_text(file_path)
+    if suffix in (".txt", ".md", ".markdown", ".csv"):
+        return load_text_file(file_path)
+    print(f"  WARN: Unsupported document type: {file_path}")
+    return ""
 
 
 def extract_tables_from_pdf(file_path: str) -> list[dict]:
@@ -94,6 +157,35 @@ def extract_tables_from_pdf(file_path: str) -> list[dict]:
     return tables
 
 
+def _table_rows_to_markdown(rows: list[list[str]]) -> str:
+    if not rows:
+        return ""
+    cols = max(len(row) for row in rows)
+    normalized = []
+    for row in rows:
+        cells = [str(cell or "").replace("\n", " ").strip() for cell in row]
+        while len(cells) < cols:
+            cells.append("")
+        normalized.append(cells)
+    lines = ["| " + " | ".join(normalized[0]) + " |"]
+    lines.append("| " + " | ".join(["---"] * cols) + " |")
+    for row in normalized[1:]:
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
+def _load_csv_as_markdown(file_path: str, encoding: str) -> str:
+    rows: list[list[str]] = []
+    with open(file_path, "r", encoding=encoding, newline="") as f:
+        reader = csv.reader(f)
+        for idx, row in enumerate(reader):
+            rows.append(row)
+            if idx >= 500:
+                rows.append(["..."])
+                break
+    return _table_rows_to_markdown(rows)
+
+
 def _extract_year(meta: dict) -> str:
     """Extract year from PDF metadata (various date formats)."""
     for key in ("creationDate", "modDate", "date"):
@@ -130,6 +222,30 @@ def load_pdf_meta(file_path: str) -> dict:
         return {"title": "", "author": "", "year": "", "file_hash": ""}
 
 
+def load_document_meta(file_path: str) -> dict:
+    """Extract best-effort metadata for any supported document."""
+    suffix = os.path.splitext(file_path)[1].lower()
+    if suffix == ".pdf":
+        return load_pdf_meta(file_path)
+    meta = {
+        "title": os.path.splitext(os.path.basename(file_path))[0],
+        "author": "",
+        "year": "",
+        "file_hash": compute_file_hash(file_path),
+    }
+    if suffix == ".docx":
+        try:
+            from docx import Document
+            props = Document(file_path).core_properties
+            meta["title"] = props.title or meta["title"]
+            meta["author"] = props.author or ""
+            if props.created:
+                meta["year"] = str(props.created.year)
+        except Exception:
+            pass
+    return meta
+
+
 def load_pdfs_from_dir(dir_path: str) -> list[dict]:
     """Load all PDFs from a directory. Returns [{'name': ..., 'text': ...}]."""
     documents = []
@@ -137,6 +253,19 @@ def load_pdfs_from_dir(dir_path: str) -> list[dict]:
         if fname.endswith(".pdf"):
             full_path = os.path.join(dir_path, fname)
             text = load_pdf_text(full_path)
+            if text.strip():
+                documents.append({"name": fname, "text": text, "path": full_path})
+    return documents
+
+
+def load_documents_from_dir(dir_path: str) -> list[dict]:
+    """Load all supported documents from a directory."""
+    documents = []
+    for fname in os.listdir(dir_path):
+        suffix = os.path.splitext(fname)[1].lower()
+        if suffix in (".pdf", ".docx", ".txt", ".md", ".markdown", ".csv"):
+            full_path = os.path.join(dir_path, fname)
+            text = load_document_text(full_path)
             if text.strip():
                 documents.append({"name": fname, "text": text, "path": full_path})
     return documents
@@ -255,8 +384,8 @@ def chunk_documents(
                     })
                     chunk_id += 1
 
-        # ── Table extraction ──
-        if extract_tables and "path" in doc:
+        # ── PDF table extraction ──
+        if extract_tables and "path" in doc and str(doc["path"]).lower().endswith(".pdf"):
             tables = extract_tables_from_pdf(doc["path"])
             for t in tables:
                 table_text = (

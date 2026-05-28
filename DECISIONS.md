@@ -3,7 +3,7 @@
 > Grill-with-docs: read this before writing code for MiniRAG.
 
 ## What we're building
-A lightweight, general-purpose RAG system for documents. Users upload files (PDFs, text, spreadsheets), ask questions, get answers with citations. Zero-model baseline, scaling up only when needed.
+A lightweight, general-purpose RAG system for documents. Users upload files (PDFs, DOCX, text, spreadsheets), ask questions, get answers with citations. Zero-model baseline, scaling up only when needed.
 
 ## Core philosophy
 
@@ -43,7 +43,7 @@ Model gradient (least → most):
 
 8. **Table extraction (NEW)**
    - Reason: economic papers contain critical data in tables. Previous pipeline lost all tabular info.
-   - Implementation: PyMuPDF find_tables() → Markdown conversion → indexed as regular chunks (with is_table flag).
+   - Implementation: PyMuPDF find_tables() for PDFs and python-docx table parsing for DOCX → Markdown conversion → indexed as regular chunks (with is_table flag for extracted PDF tables).
 
 9. **Metadata filtering (NEW)**
    - Reason: users want to scope searches to specific authors, years, or papers.
@@ -53,9 +53,9 @@ Model gradient (least → most):
 
 | Choice | Picked | Rejected | Why |
 |---|---|---|---|
-| UI | Streamlit + Gradio | Chainlit, FastAPI | Streamlit for prototyping, Gradio for chat-native UX |
+| UI | Streamlit | Gradio, Chainlit, FastAPI | Keep one maintained local UI instead of two parallel frontends |
 | LLM | DeepSeek API | Ollama local | API is simpler to start; local mode is a future feature |
-| PDF lib | PyMuPDF | pdfplumber, Unstructured | Fastest, best text + table extraction |
+| Parsing libs | PyMuPDF + python-docx | pdfplumber, Unstructured | Fast local PDF/DOCX parsing without a heavy document pipeline |
 | Chunking | Custom section-split | LangChain text splitter | Preserves paper structure |
 | DB | Chroma | FAISS, Milvus | Simplest persistent local store |
 | BM25 | Custom numpy impl | rank_bm25, sklearn | Zero extra deps, fast enough for <10k docs |
@@ -68,13 +68,12 @@ Model gradient (least → most):
 - Chroma version upgrades break old databases. Need migration path.
 - Table extraction requires PyMuPDF >= 1.23.0 (silently falls back).
 - BM25 index rebuilds on collection change (lazy, but could be slow for very large DBs).
-- Gradio streaming is less smooth than Streamlit's native streaming support.
+- DOCX page numbers are not available from python-docx, so citations show page `?`.
 
 ## Project structure convention
 - `src/` = core pipeline modules (independent, importable)
 - `main.py` = Streamlit UI
-- `gradio_app.py` = Gradio chat UI
 - `test_pipeline.py` = end-to-end test
-- `download_papers.py` = arXiv API + RSS + manual downloads
-- `data/documents/` = user's files (PDF, TXT, etc.)
+- `documents/` = user's files (PDF, DOCX, TXT, Markdown, CSV)
+- `data/` = local app data such as Q&A history
 - `chroma_db/` = vector store (gitignored)

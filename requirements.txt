@@ -4,7 +4,4 @@ chromadb
 openai
 python-dotenv
 numpy
-requests
-arxiv
-feedparser
-gradio
+python-docx

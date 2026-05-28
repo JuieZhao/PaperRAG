@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.loader import load_pdf_text, load_pdf_meta, chunk_documents, compute_file_hash
+from src.loader import load_document_text, load_document_meta, chunk_documents, compute_file_hash
 from src.embedder import embed_texts, get_model_info
 from src.vector_store import (
     get_collection, add_chunks, get_chunk_count, get_source_names,
@@ -21,6 +21,7 @@ from src.vector_store import (
 from src.retriever import search_documents
 
 HISTORY_FILE = "data/qa_history.json"
+DOCUMENTS_DIR = "documents"
 
 st.set_page_config(page_title="MiniRAG", page_icon="📄", layout="wide")
 
@@ -253,15 +254,18 @@ with st.sidebar:
 
     # ── Upload ──
     st.markdown("### 📤 Upload Documents")
+    st.caption(f"Files are saved in `{DOCUMENTS_DIR}/`.")
     uploaded_files = st.file_uploader(
-        "Choose PDF files", type="pdf", accept_multiple_files=True,
+        "Choose documents",
+        type=["pdf", "docx", "txt", "md", "csv"],
+        accept_multiple_files=True,
         label_visibility="collapsed",
     )
 
     if uploaded_files:
         if st.button("⚡ Index Documents", type="primary", use_container_width=True):
             with st.spinner("Parsing + embedding..."):
-                os.makedirs("data/papers", exist_ok=True)
+                os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
                 if "source_list" not in st.session_state or st.session_state.source_list is None:
                     st.session_state.source_list = get_source_names(collection)
@@ -272,7 +276,7 @@ with st.sidebar:
                 new_files = []
 
                 for uf in uploaded_files:
-                    path = os.path.join("data/papers", uf.name)
+                    path = os.path.join(DOCUMENTS_DIR, uf.name)
                     with open(path, "wb") as f:
                         f.write(uf.getbuffer())
 
@@ -297,10 +301,10 @@ with st.sidebar:
                     source_metas = {}
 
                     for name, path, file_hash in new_files:
-                        text = load_pdf_text(path)
+                        text = load_document_text(path)
                         if text.strip():
                             papers.append({"name": name, "text": text, "path": path})
-                            meta = load_pdf_meta(path)
+                            meta = load_document_meta(path)
                             meta["file_hash"] = file_hash
                             source_metas[name] = meta
                         else:
@@ -309,7 +313,7 @@ with st.sidebar:
                     if not papers:
                         st.error("No extractable text found.")
                         for name in failed:
-                            st.warning(f"❌ `{name}` — scanned PDF?")
+                            st.warning(f"❌ `{name}` — no extractable text found")
                     else:
                         progress = st.progress(0, "Chunking...")
                         chunks = chunk_documents(papers, extract_tables=True)
@@ -319,19 +323,7 @@ with st.sidebar:
                         embeddings = embed_texts(texts)
 
                         progress.progress(75, "Storing...")
-                        # Store per-paper metadata with each chunk
-                        for c in chunks:
-                            meta = source_metas.get(c["source_name"], {})
-                            c["_source_meta"] = meta
-
-                        # Build full source_meta dict for add_chunks
-                        full_meta = {}
-                        for c in chunks:
-                            if c["source_name"] in source_metas:
-                                full_meta = source_metas[c["source_name"]]
-                                break
-
-                        add_chunks(collection, chunks, embeddings, source_meta=full_meta)
+                        add_chunks(collection, chunks, embeddings, source_meta_map=source_metas)
                         progress.progress(100, "Done!")
                         table_count = sum(1 for c in chunks if c.get("is_table"))
                         msg = f"✅ {len(papers)} documents · {len(chunks)} chunks"
@@ -356,9 +348,9 @@ with st.sidebar:
             st.session_state.source_meta = {}
         for p in source_names:
             if p not in st.session_state.source_meta:
-                path = os.path.join("data/papers", p)
+                path = os.path.join(DOCUMENTS_DIR, p)
                 if os.path.exists(path):
-                    st.session_state.source_meta[p] = load_pdf_meta(path)
+                    st.session_state.source_meta[p] = load_document_meta(path)
                 else:
                     st.session_state.source_meta[p] = {"title": "", "author": "", "year": ""}
 

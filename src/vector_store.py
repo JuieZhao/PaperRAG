@@ -21,14 +21,16 @@ def add_chunks(
     chunks: list[dict],
     embeddings: list[list[float]],
     source_meta: dict | None = None,
+    source_meta_map: dict[str, dict] | None = None,
 ):
     """
     Add chunks + embeddings to Chroma with extended metadata.
 
     chunks: [{'source_name': ..., 'chunk_id': ..., 'text': ..., 'page': ...,
               'is_table': bool (optional)}]
-    source_meta: optional dict with per-source metadata:
+    source_meta: optional fallback metadata dict:
                 {'file_hash': ..., 'author': ..., 'year': ..., 'title': ...}
+    source_meta_map: optional mapping keyed by source_name for multi-file batches.
     """
     ids = [f"{c['source_name']}_chunk_{c['chunk_id']}" for c in chunks]
     documents = [c["text"] for c in chunks]
@@ -41,11 +43,12 @@ def add_chunks(
             "is_table": c.get("is_table", False),
         }
         # Merge source-level metadata into each chunk
-        if source_meta:
-            meta["author"] = source_meta.get("author", "")
-            meta["year"] = source_meta.get("year", "")
-            meta["file_hash"] = source_meta.get("file_hash", "")
-            meta["source_title"] = source_meta.get("title", "")
+        chunk_meta = (source_meta_map or {}).get(c["source_name"], source_meta or {})
+        if chunk_meta:
+            meta["author"] = chunk_meta.get("author", "")
+            meta["year"] = chunk_meta.get("year", "")
+            meta["file_hash"] = chunk_meta.get("file_hash", "")
+            meta["source_title"] = chunk_meta.get("title", "")
         metadatas.append(meta)
 
     # Batch insert

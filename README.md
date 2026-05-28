@@ -11,7 +11,7 @@ Upload documents, ask questions in natural language, get cited answers grounded 
 - **Every answer is traceable** — citations link to specific documents and text chunks
 - **You control the knowledge base** — add/remove files to curate what the AI knows
 - **Hybrid search** — BM25 keyword + dense vector retrieval fused via RRF for better recall
-- **Multi-format support** — PDF, TXT, Markdown, CSV (DOCX coming soon)
+- **Multi-format support** — PDF, DOCX, TXT, Markdown, CSV
 - **Content dedup** — SHA256 hashing prevents duplicate indexing
 - **Flexible chunking** — section-aware for reports, fixed-size for general docs
 - **Metadata filters** — filter by source, author, year
@@ -38,50 +38,29 @@ Upload documents, ask questions in natural language, get cited answers grounded 
 pip install -r requirements.txt
 ```
 
-### 2. Choose your UI
+### 2. Run the app
 
-**Streamlit:**
 ```bash
 streamlit run main.py
 ```
 
-**Gradio (chat-native):**
-```bash
-python gradio_app.py
-```
-
 Open the URL, paste your DeepSeek API key in the sidebar, upload your files, and start asking questions.
+
+You can also put files directly in `documents/` before indexing.
 
 > 💡 Get a free API key at [platform.deepseek.com](https://platform.deepseek.com).
 > The key stays in your browser session — never saved to disk.
 >
 > Create a `.env` file (see `.env.example`) for persistent config.
 
-### 3. (Optional) Download sample documents
-
-```bash
-# Manual URL list
-python download_papers.py manual
-
-# Search arXiv by keyword
-python download_papers.py arxiv-search "global value chains" -c econ.GN -n 5
-
-# Fetch latest from arXiv RSS feed
-python download_papers.py arxiv-rss -c cs.AI -n 10
-
-# Dry-run (search only, no download)
-python download_papers.py arxiv-search "supply chain resilience" --dry-run
-```
-
 ## Project Structure
 
 ```
 MiniRAG/
 ├── main.py                  # Streamlit UI
-├── gradio_app.py            # Gradio chat UI
 ├── requirements.txt
 ├── .env.example
-├── download_papers.py       # arXiv API + RSS + manual downloads
+├── documents/               # Files to upload/index
 ├── test_pipeline.py         # End-to-end pipeline test
 ├── src/
 │   ├── loader.py            # Document parsing + table extraction + chunking
@@ -90,7 +69,7 @@ MiniRAG/
 │   ├── retriever.py         # Hybrid retrieval (BM25 + Dense + RRF)
 │   ├── bm25_retriever.py    # BM25 keyword search engine
 │   └── generator.py         # LLM answer generation (streaming)
-├── data/papers/             # Your files (git-ignored)
+├── data/                    # Local app data, such as Q&A history
 └── chroma_db/               # Vector store persistence (git-ignored)
 ```
 
@@ -98,15 +77,14 @@ MiniRAG/
 
 | Layer | Technology | Notes |
 |-------|-----------|-------|
-| UI | Streamlit / Gradio | Two frontends included |
-| Parsing | PyMuPDF (fitz) | PDF + table extraction |
+| UI | Streamlit | Single local frontend |
+| Parsing | PyMuPDF + python-docx | PDF table extraction + DOCX paragraphs/tables |
 | Embedding | BGE (multiple models) | GPU auto-detect, local inference |
 | Keyword Search | BM25 (custom impl) | No external deps beyond numpy |
 | Vector DB | Chroma | Persistent, zero-config |
 | LLM | DeepSeek API | OpenAI-compatible SDK |
 | Reranking | ms-marco-MiniLM-L-6-v2 | Cross-encoder for precision |
 | Fusion | RRF | Reciprocal Rank Fusion |
-| Sources | arXiv API + RSS | Automated document ingestion |
 
 ## Configuration
 
